@@ -2,7 +2,7 @@
 
 繁體中文 | English below
 
-> **開發中（v0.1）。** 監控、數據機讀取、事件分類與報告都可以試用；目前只在 Windows 上實測過，macOS / Linux 待驗證。
+> **v0.1.0（第一版）。** 監控、數據機讀取、事件分類與報告都可以試用；Windows 已實機測試；macOS / Linux 通過自動化測試，還需要實機使用回報。
 
 ## 這是什麼
 
@@ -62,7 +62,7 @@ macOS / Linux 用 `python3` 取代 `py -3`。
 
 ## English
 
-> **Work in progress (v0.1).** Monitoring, modem reading, event classes and reports work; tested on Windows only so far.
+> **v0.1.0 (first release).** Monitoring, modem reading, event classes and reports work; tested on Windows only so far.
 
 Short cable (DOCSIS) dropouts of a few seconds often never show up in ISP
 monitoring: the modem stays registered and the ISP's periodic checks see nothing.
