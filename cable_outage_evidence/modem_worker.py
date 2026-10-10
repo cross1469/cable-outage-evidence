@@ -75,7 +75,9 @@ class ModemWorker:
         self.status = "unknown"
         self.next_login = 0.0
         self.on_status = None             # callback(status, message), e.g. notifications
-        self.last_failure_row = 0.0
+        # Not 0.0: monotonic time counts from boot on Linux, so on a machine up
+        # for under a poll interval the first failure would look already written.
+        self.last_failure_row = float("-inf")
         self.obs_lock = threading.Lock()
         self.thread = threading.Thread(target=self._run, name="modem-worker", daemon=True)
 

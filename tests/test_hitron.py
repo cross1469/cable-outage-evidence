@@ -150,6 +150,16 @@ class WorkerAgainstFakeModem(unittest.TestCase):
         self.assertIn('"status": "auth_failed"', journal)
         self.assertNotIn("wrong-password", journal)
 
+    def test_first_failure_is_written_right_after_boot(self):
+        """time.monotonic() counts from boot on Linux; a fresh machine must
+        still write the first failure row (found by CI on a new runner)."""
+        from unittest import mock
+        w, store = self.worker()
+        with mock.patch.object(modem_worker.time, "monotonic", return_value=5.0):
+            w._failed("Periodic", hitron.ModemAuthError("login rejected"))
+        text = (store.day_dir() / "modem-signals.csv").read_text(encoding="utf-8")
+        self.assertIn("login rejected", text)
+
     def test_unreachable_modem_is_announced(self):
         import socket
         with socket.socket() as s:            # a port nothing listens on
