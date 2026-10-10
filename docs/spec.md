@@ -223,6 +223,18 @@ cable 線路上跑了約兩個月，記錄到多次 7–10 秒的瞬斷。本文
 每個 HTTP 請求都有硬性逾時：連線 1 s；`UsInfo`、`UsOfdm`、`DsOfdm` 2 s；`DsInfo`、
 `SysInfo`、`Log`、登入登出 4 s。數據機慢或卡住時，只會拖慢數據機模組，不能拖慢探測。
 
+### 8.2.1 讀取狀態與通知
+
+數據機讀取的狀態分成四種：`ok`、`unreachable`（沒有 HTTP 回應）、`auth_failed`（帳密被拒）、
+`bad_response`（有回應但 `errCode` 不是 `000`，或不是 JSON）。
+
+- 帳密錯誤立即通知；其他兩種要連續失敗 3 次才通知，因為逾時和 session 過期偶爾會發生。
+- 狀態改變時（包括恢復）印出通知，內容含建議的處理方式，並寫進 `events-journal.jsonl`
+  （`type: modem_status`），報告用它說明哪段時間沒有數據機資料、原因是什麼。
+- 帳密錯誤後每 300 s 才重試登入一次，避免數據機因多次失敗而鎖住帳號。
+- 數據機讀取失敗**不影響**探測、斷線偵測和等級判斷；數據機的 ping 仍是獨立的一層。
+- 通知內容不含密碼。
+
 ### 8.3 讀取頻率
 
 原版實測這型數據機的回應時間：`UsInfo`、`UsOfdm`、`DsOfdm` 約 0.1 s，`DsInfo` 0.7 s，
@@ -341,7 +353,7 @@ CMTS MAC 和 ISP 第一跳的位址不遮蔽，因為它們指出 ISP 自己的�
 | `path_discovery_interval_sec` | 300 | 重新找 ISP 第一跳的間隔 |
 | `modem_type` | `hitron-coda` | `none` 表示不讀數據機 |
 | `modem_url` | `http://192.168.0.1` | |
-| `modem_username` / `modem_password` | 無預設 | 第一次執行時詢問，存在只有使用者可讀的設定檔 |
+| `modem_username` / `modem_password` | `admin` / `password` | Hitron 的原廠預設；`init` 會詢問，直接按 Enter 沿用。存在只有使用者可讀的設定檔 |
 | `modem_state_poll_interval_sec` | 5 | |
 | `modem_poll_interval_sec` | 30 | |
 | `modem_channel_ds_interval_sec` | 300 | |

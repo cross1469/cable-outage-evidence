@@ -42,8 +42,9 @@ py -3 -m unittest discover -s tests -t .       # 測試
 
 macOS / Linux 用 `python3` 取代 `py -3`。
 
-讀取數據機前先執行 `init` 設定數據機位址與帳密（密碼只存在本機的設定檔），
-再用 `modem-check` 確認連得上。事件分類、時間軸和給 ISP 的報告還在開發中。
+數據機帳密預設為 Hitron 原廠的 `admin` / `password`。如果你的 ISP 改過，執行 `init` 重新設定
+（密碼只存在本機的設定檔），再用 `modem-check` 確認連得上。數據機連不上或帳密錯誤時，
+監控會印出通知與處理建議，探測和斷線偵測照常進行。事件分類、時間軸和給 ISP 的報告還在開發中。
 
 ## English
 

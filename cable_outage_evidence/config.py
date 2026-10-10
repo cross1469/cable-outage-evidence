@@ -41,8 +41,9 @@ class Config:
     path_discovery_interval_sec: int = 300
     modem_type: str = "hitron-coda"
     modem_url: str = "http://192.168.0.1"
-    modem_username: str = ""
-    modem_password: str = ""
+    # Hitron's factory default; some ISPs change it or print it on the label.
+    modem_username: str = "admin"
+    modem_password: str = "password"
     modem_state_poll_interval_sec: int = 5
     modem_poll_interval_sec: int = 30
     modem_channel_ds_interval_sec: int = 300

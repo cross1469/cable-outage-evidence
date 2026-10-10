@@ -115,7 +115,7 @@ class Monitor:
         self.on_event_start = None
         self.on_event_recovered = None
         self.modem: Optional[modem_worker.ModemWorker] = None
-        if cfg.modem_type == "hitron-coda" and cfg.modem_url and cfg.modem_username:
+        if cfg.modem_type == "hitron-coda" and cfg.modem_url:
             self.modem = modem_worker.ModemWorker(cfg, self.store)
 
     # --- probing -------------------------------------------------------------
@@ -237,8 +237,6 @@ class Monitor:
         if self.modem:
             self.modem.request_snapshot("Startup")
             self.modem.start()
-        elif self.cfg.modem_type != "none":
-            log.info("modem reading is off: set modem_username and modem_password (run init)")
         self.store.append_jsonl("sessions.jsonl", {"type": "start", "time": storage.now_text(),
                                                    "ping_method": self.pinger.method})
         log.info("monitoring every %d ms; ping via %s; data in %s",

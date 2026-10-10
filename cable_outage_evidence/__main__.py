@@ -52,15 +52,15 @@ def cmd_init(cfg, args):
             cfg.modem_type = "none"
         else:
             cfg.modem_url = url or cfg.modem_url
-            cfg.modem_username = input(f"modem username [{cfg.modem_username or 'admin'}]: ").strip() or cfg.modem_username or "admin"
-            cfg.modem_password = getpass.getpass("modem password (not shown): ")
+            cfg.modem_username = input(f"modem username [{cfg.modem_username}]: ").strip() or cfg.modem_username
+            cfg.modem_password = getpass.getpass("modem password (not shown; Enter keeps the factory default): ") or cfg.modem_password
     print(f"wrote {config.save(cfg, path)}")
 
 
 def cmd_modem_check(cfg, args):
     """Logs in once and prints what the modem reports; never prints credentials."""
-    if cfg.modem_type == "none" or not cfg.modem_username:
-        print("modem reading is off (run init)")
+    if cfg.modem_type == "none":
+        print("modem reading is off (modem_type = none)")
         return 1
     client = hitron.HitronClient(cfg.modem_url, cfg.modem_username, cfg.modem_password)
     try:
@@ -75,7 +75,10 @@ def cmd_modem_check(cfg, args):
         entries = hitron.log_entries(client.get("Log")[0])
         print(f"event log: {len(entries)} entries")
     except hitron.ModemError as e:
-        print(f"modem check failed: {e}")
+        from .modem_worker import status_message, UNREACHABLE, AUTH_FAILED, BAD_RESPONSE
+        kind = (AUTH_FAILED if isinstance(e, hitron.ModemAuthError) else
+                UNREACHABLE if isinstance(e, hitron.ModemUnreachable) else BAD_RESPONSE)
+        print(status_message(kind, str(e), cfg, monitoring=False))
         return 1
     finally:
         client.logout()

@@ -19,6 +19,32 @@ from . import config, hitron, storage
 log = logging.getLogger("cable-outage-evidence")
 
 SIGNALS_HEADER = hitron.SUMMARY_HEADER + ["SkewSec"]
+
+# Modem reading status. Probing and outage detection never depend on it.
+OK, UNREACHABLE, AUTH_FAILED, BAD_RESPONSE = "ok", "unreachable", "auth_failed", "bad_response"
+# A wrong password is retried this rarely, so the modem never locks the account.
+AUTH_RETRY_SEC = 300
+# Timeouts and odd answers happen (an expired session looks like one), so a
+# status change is announced only after this many reads in a row fail.
+FAILURES_BEFORE_NOTICE = 3
+
+
+def status_message(status: str, detail: str, cfg, monitoring: bool = True) -> str:
+    """The notice shown when reading changes status. monitoring=False drops
+    the lines about the running monitor, for one-off commands."""
+    running = "探測與斷線偵測照常進行。" if monitoring else ""
+    if status == OK:
+        return "數據機讀取正常 / modem readings OK"
+    if status == UNREACHABLE:
+        return (f"數據機連不上 / modem unreachable ({detail})。請確認 modem_url（目前 {cfg.modem_url}）；"
+                "數據機接在家用路由器後面時，常見位址是 http://192.168.0.1 或 http://192.168.100.1。"
+                + running)
+    if status == AUTH_FAILED:
+        return (f"數據機帳密錯誤 / modem login rejected。請執行 init 重新設定 modem_username 和 "
+                f"modem_password（預設 admin / password，有些 ISP 會改掉或印在數據機貼紙上）。"
+                + (f"{AUTH_RETRY_SEC // 60} 分鐘後再試一次。" if monitoring else "") + running)
+    return (f"數據機回應異常 / unexpected modem response ({detail})。可能不是支援的 Hitron CODA 韌體。"
+            + running)
 FAST_HEADER = ["Timestamp", "Trigger", "Tick", "TickLateMs", "CoreOK", "CoreMs", "SlowRead", "SkewSec",
                "UsScQamOperate", "UsScQamCount", "UsOfdmaOperate", "UsOfdmaCount",
                "DsOfdmLocked", "DsOfdmCount", "DsScQamLocked", "DsScQamCount"]
@@ -46,6 +72,9 @@ class ModemWorker:
         self.slow_future: Optional[cf.Future] = None
         self.core = cf.ThreadPoolExecutor(max_workers=len(hitron.FAST_ENDPOINTS), thread_name_prefix="modem-core")
         self.failures = 0
+        self.status = "unknown"
+        self.next_login = 0.0
+        self.on_status = None             # callback(status, message), e.g. notifications
         self.last_failure_row = 0.0
         self.obs_lock = threading.Lock()
         self.thread = threading.Thread(target=self._run, name="modem-worker", daemon=True)
@@ -87,20 +116,58 @@ class ModemWorker:
     # --- modem access --------------------------------------------------------------------
 
     def _get(self, endpoint: str, timeout: float = None) -> Dict:
-        with self.login_lock:
-            if not self.client.logged_in:
-                self.client.login()
-        data, modem_epoch = self.client.get(endpoint, timeout)
+        try:
+            with self.login_lock:
+                if not self.client.logged_in:
+                    if self.status == AUTH_FAILED and time.monotonic() < self.next_login:
+                        # Not retried yet: no request reaches the modem.
+                        raise hitron.ModemAuthError("login rejected (waiting before the next try)")
+                    try:
+                        self.client.login()
+                    except hitron.ModemAuthError:
+                        self.next_login = time.monotonic() + AUTH_RETRY_SEC
+                        raise
+            data, modem_epoch = self.client.get(endpoint, timeout)
+        except hitron.ModemError as e:
+            self._read_failed(e)
+            raise
         if modem_epoch is not None:
             self.skews.append(int(round(time.time() - modem_epoch)))
         self.latest[endpoint] = data
         self.failures = 0
+        self._set_status(OK, "")
         return data
 
-    def _failed(self, reason: str, err: Exception) -> None:
+    def _read_failed(self, err: hitron.ModemError) -> None:
         self.failures += 1
-        if self.failures in (1, 3) or self.failures % 60 == 0:
-            log.warning("modem read failed (%s): %s", reason, err)
+        if isinstance(err, hitron.ModemAuthError):
+            self._set_status(AUTH_FAILED, str(err))
+        elif self.failures >= FAILURES_BEFORE_NOTICE:
+            self._set_status(UNREACHABLE if isinstance(err, hitron.ModemUnreachable) else BAD_RESPONSE, str(err))
+
+    def _set_status(self, status: str, detail: str) -> None:
+        with self.lock:
+            if status == self.status:
+                return
+            previous, self.status = self.status, status
+        message = status_message(status, detail, self.cfg)
+        # The first successful read is routine; every other change is news.
+        routine = status == OK and previous == "unknown"
+        (log.info if routine else log.warning)("%s", message)
+        # Reports use these to show when modem data is missing and why.
+        self.store.append_jsonl("events-journal.jsonl", {
+            "type": "modem_status", "time": storage.now_text(), "status": status,
+            "previous": previous, "detail": detail})
+        if self.on_status and not routine:
+            try:
+                self.on_status(status, message)
+            except Exception:   # a notifier must never stop the worker
+                log.exception("modem status notifier failed")
+
+    def _failed(self, reason: str, err: Exception) -> None:
+        """Writes a failure row, at most one per poll interval. The status
+        change itself is announced by _set_status."""
+        log.debug("modem read failed (%s): %s", reason, err)
         now = time.monotonic()
         if now - self.last_failure_row < self.cfg.modem_poll_interval_sec:
             return

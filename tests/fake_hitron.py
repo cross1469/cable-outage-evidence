@@ -27,6 +27,8 @@ class FakeHitron:
         self.clock_offset = clock_offset
         self.reads = {}
         self.logins = 0
+        self.login_attempts = 0
+        self.answer_errors = False   # answer every read with errCode 002
         self.token = "abc123"
         fake = self
 
@@ -52,6 +54,7 @@ class FakeHitron:
                 length = int(self.headers.get("Content-Length", 0))
                 form = urllib.parse.parse_qs(self.rfile.read(length).decode())
                 if self.path.startswith("/1/Device/Users/Login"):
+                    fake.login_attempts += 1
                     creds = json.loads(form.get("model", ["{}"])[0])
                     if creds == {"username": fake.username, "password": fake.password}:
                         fake.logins += 1
@@ -66,6 +69,8 @@ class FakeHitron:
                 if f"session={fake.token}" not in (self.headers.get("Cookie") or ""):
                     return self._send({"errCode": "001", "errMsg": "not logged in"})
                 fake.reads[endpoint] = fake.reads.get(endpoint, 0) + 1
+                if fake.answer_errors:
+                    return self._send({"errCode": "002", "errMsg": "busy"})
                 data = copy.deepcopy(load(endpoint))
                 if (endpoint == "UsOfdm" and fake.drop_ofdma_after is not None
                         and fake.reads[endpoint] > fake.drop_ofdma_after):

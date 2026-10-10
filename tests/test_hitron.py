@@ -126,16 +126,70 @@ class WorkerAgainstFakeModem(unittest.TestCase):
         # Channel 1 left its original state, so it is not OPERATE now.
         self.assertEqual(fast[-1]["UsOfdmaOperate"], str(original.count("OPERATE") - (original[1] == "OPERATE")))
 
-    def test_wrong_password_records_failure_without_secret(self):
+    def test_wrong_password_is_announced_once_and_not_hammered(self):
         w, store = self.worker()
         w.client = type(w.client)(self.fake.url, "admin", "wrong-password")
+        notices = []
+        w.on_status = lambda status, message: notices.append(status)
         w.start()
-        time.sleep(1.5)
+        time.sleep(3.5)          # several 1 s state polls
         w.stop()
-        text = (store.day_dir() / "modem-signals.csv").read_text(encoding="utf-8")
+        self.assertEqual(notices, [modem_worker.AUTH_FAILED])
+        # One login attempt; the retry waits AUTH_RETRY_SEC.
+        self.assertEqual(self.fake.login_attempts, 1)
+        day = store.day_dir()
+        text = (day / "modem-signals.csv").read_text(encoding="utf-8")
         self.assertIn("login rejected", text)
         self.assertNotIn("wrong-password", text)
+        journal = (day / "events-journal.jsonl").read_text(encoding="utf-8")
+        self.assertIn('"status": "auth_failed"', journal)
+        self.assertNotIn("wrong-password", journal)
+
+    def test_unreachable_modem_is_announced(self):
+        import socket
+        with socket.socket() as s:            # a port nothing listens on
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        cfg = config.Config(modem_url=f"http://127.0.0.1:{port}", data_dir=self.tmp.name,
+                            modem_state_poll_interval_sec=1)
+        w = modem_worker.ModemWorker(cfg, storage.Store(cfg.data_path))
+        notices = []
+        w.on_status = lambda status, message: notices.append((status, message))
+        w.start()
+        time.sleep(4.5)
+        w.stop()
+        self.assertEqual([n[0] for n in notices], [modem_worker.UNREACHABLE])
+        self.assertIn("modem_url", notices[0][1])
+
+    def test_bad_responses_then_recovery_are_announced(self):
+        w, store = self.worker()
+        self.fake.answer_errors = True
+        notices = []
+        w.on_status = lambda status, message: notices.append(status)
+        w.start()
+        time.sleep(4.5)
+        self.fake.answer_errors = False
+        time.sleep(2.5)
+        w.stop()
+        self.assertEqual(notices, [modem_worker.BAD_RESPONSE, modem_worker.OK])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MonitorKeepsProbingWhenModemFails(unittest.TestCase):
+    def test_samples_continue_with_rejected_login(self):
+        import threading
+        from cable_outage_evidence import monitor
+        fake = FakeHitron(password="not-the-default")
+        with tempfile.TemporaryDirectory() as d:
+            cfg = config.Config(modem_url=fake.url, data_dir=d, path_discovery_interval_sec=3600,
+                                public_targets=[("A", "127.0.0.1"), ("B", "127.0.0.1")])
+            m = monitor.Monitor(cfg)
+            m.path.discover = lambda: None          # no traceroute in tests
+            threading.Timer(3, m.stop).start()
+            m.run()
+            self.assertGreaterEqual(m.sequence, 5)
+            self.assertEqual(m.modem.status, modem_worker.AUTH_FAILED)
+        fake.close()

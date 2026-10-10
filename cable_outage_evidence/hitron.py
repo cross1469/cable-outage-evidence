@@ -18,7 +18,20 @@ TIMEOUTS = {"UsInfo": 2, "UsOfdm": 2, "DsOfdm": 2, "DsInfo": 4, "SysInfo": 4, "L
 
 
 class ModemError(Exception):
-    pass
+    """Any failed modem read. The subclass says which kind (spec §8.2)."""
+
+
+class ModemUnreachable(ModemError):
+    """No HTTP answer: wrong address, modem off, or a timeout."""
+
+
+class ModemAuthError(ModemError):
+    """The modem answered but rejected the username or password."""
+
+
+class ModemResponseError(ModemError):
+    """The modem answered, but not with usable data (errCode other than 000,
+    or not JSON). An expired session looks like this; the next read logs in."""
 
 
 class HitronClient:
@@ -39,11 +52,11 @@ class HitronClient:
                 text = r.read().decode("utf-8", "replace")
         except OSError as e:
             self.logged_in = False
-            raise ModemError(f"login failed: {type(e).__name__}") from None
+            raise ModemUnreachable(f"no answer from {self.base} ({type(e).__name__})") from None
         # The response never echoes the credentials; only the result is checked.
         self.logged_in = '"result":"success"' in text.replace(" ", "")
         if not self.logged_in:
-            raise ModemError("login rejected")
+            raise ModemAuthError("login rejected: check modem_username and modem_password")
 
     def logout(self) -> None:
         body = urllib.parse.urlencode({"model": "{}"}).encode()
@@ -63,14 +76,14 @@ class HitronClient:
                 raw = r.read()
                 date = r.headers.get("Date")
         except OSError as e:
-            raise ModemError(f"{endpoint}: {type(e).__name__}") from None
+            raise ModemUnreachable(f"{endpoint}: no answer ({type(e).__name__})") from None
         try:
             data = json.loads(raw.decode("utf-8", "replace"))
         except ValueError:
-            raise ModemError(f"{endpoint}: not JSON") from None
+            raise ModemResponseError(f"{endpoint}: not JSON") from None
         if str(data.get("errCode", "")) != "000":
             self.logged_in = False
-            raise ModemError(f"{endpoint}: errCode {data.get('errCode')!r}")
+            raise ModemResponseError(f"{endpoint}: errCode {data.get('errCode')!r}")
         return data, parse_http_date(date)
 
 
