@@ -58,9 +58,10 @@ class FakeCbn:
                 self.send(b"<html>CBN</html>")
 
             def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 if self.path.startswith("/1/"):
                     return self.send(b"<html>CBN</html>")
-                form = urllib.parse.parse_qs(self.rfile.read(int(self.headers["Content-Length"])).decode())
+                form = urllib.parse.parse_qs(body.decode())
                 value = json.loads(urllib.parse.unquote(base64.b64decode(form["Data"][0]).decode()))
                 fun = value["fun"]
                 fake.reads[fun] = fake.reads.get(fun, 0) + 1
