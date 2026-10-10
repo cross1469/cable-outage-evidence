@@ -29,6 +29,15 @@ ingress）的特徵。工具量不到 ingress 本身，但能把證據整理好�
 
 詳細規則見 [docs/spec.md](docs/spec.md)。
 
+## 下載與使用
+
+**Windows：** 到 [Releases](../../releases) 下載 `cable-outage-evidence-<版本>-windows-x64.zip`，解壓縮後雙擊
+`cable-outage-evidence.exe`。第一次執行會詢問數據機位址與帳密，直接按 Enter 使用原廠預設
+（`admin` / `password`）。之後視窗會持續監控，要保持開著。exe 沒有數位簽章，第一次執行若被
+SmartScreen 擋下，點「其他資訊」→「仍要執行」。
+
+**macOS / Linux：** 需要 Python 3.9 以上。下載原始碼後執行 `python3 -m cable_outage_evidence`。
+
 ## 目前可以試用的部分
 
 ```

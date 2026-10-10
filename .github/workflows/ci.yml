@@ -1,0 +1,57 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        python: ["3.9", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit tests and live platform checks
+        env:
+          COE_LIVE: "1"
+        run: python -m unittest discover -s tests -t . -v
+      - name: Command smoke test
+        shell: bash
+        run: |
+          printf '[monitor]\nmodem_type = none\nmodem_url =\ndata_dir = %s\n' "$RUNNER_TEMP/coe-data" > "$RUNNER_TEMP/coe.ini"
+          python -m cable_outage_evidence --version
+          python -m cable_outage_evidence --config "$RUNNER_TEMP/coe.ini" paths
+          python -m cable_outage_evidence --config "$RUNNER_TEMP/coe.ini" discover-path
+          python -m cable_outage_evidence --config "$RUNNER_TEMP/coe.ini" once
+          python -m cable_outage_evidence --config "$RUNNER_TEMP/coe.ini" report --days 1
+
+  windows-exe:
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install pyinstaller
+      - name: Build
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build-windows.ps1 python
+      - name: Exe smoke test
+        shell: bash
+        run: |
+          ./dist/cable-outage-evidence.exe --version
+          printf '[monitor]\nmodem_type = none\nmodem_url =\ndata_dir = %s\n' "$RUNNER_TEMP/exe-data" > "$RUNNER_TEMP/exe.ini"
+          ./dist/cable-outage-evidence.exe --config "$RUNNER_TEMP/exe.ini" once
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/*.zip

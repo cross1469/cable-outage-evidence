@@ -128,7 +128,26 @@ def cmd_paths(cfg, args):
     print(f"data:   {cfg.data_path}")
 
 
+def cmd_start(cfg, args):
+    """What a double-click does: set up on first use, check the modem, monitor."""
+    path = Path(args.config) if args.config else config.default_config_path()
+    print(f"cable-outage-evidence {__version__}")
+    if not path.exists():
+        print("第一次使用，先建立設定檔。直接按 Enter 會使用括號裡的預設值。")
+        args.force = False
+        cmd_init(cfg, args)
+        cfg = config.load(path)
+    print(f"設定檔：{path}")
+    print(f"資料夾：{cfg.data_path}")
+    if cfg.modem_type != "none":
+        cmd_modem_check(cfg, args)
+    print("開始監控。這個視窗要保持開著；要停止請按 Ctrl+C。")
+    print("事件報告：在命令列執行 cable-outage-evidence report（或 evidence / timeline）。")
+    cmd_run(cfg, args)
+
+
 COMMANDS = {
+    "start": (cmd_start, "first-time setup if needed, modem check, then monitor (the default)"),
     "run": (cmd_run, "monitor until stopped (Ctrl+C)"),
     "once": (cmd_once, "take one sample and print it"),
     "discover-path": (cmd_discover_path, "show the default gateway and ISP first hop"),
@@ -150,7 +169,7 @@ def main(argv=None):
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--config", help="config file (default: per-user location)")
     p.add_argument("-v", "--verbose", action="store_true")
-    sub = p.add_subparsers(dest="command", required=True)
+    sub = p.add_subparsers(dest="command")
     for name, (_, text) in COMMANDS.items():
         sp = sub.add_parser(name, help=text)
         if name == "init":
@@ -164,14 +183,28 @@ def main(argv=None):
         if name in ("report", "evidence", "timeline", "docsis-log", "ucid-report"):
             sp.add_argument("--no-redact", action="store_true", help="do not mask home addresses and MACs")
             sp.add_argument("--out", help="write to this file (UTF-8) instead of the console")
+    argv = sys.argv[1:] if argv is None else argv
+    # No command (a double-click on the exe): start. Options alone still apply.
+    if not any(a in COMMANDS for a in argv) and not any(a in ("-h", "--help", "--version") for a in argv):
+        argv = list(argv) + ["start"]
     args = p.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         # Reports are Chinese; a legacy console code page must not crash them.
-        sys.stdout.reconfigure(errors="replace")
+        sys.stdout.reconfigure(errors="replace", line_buffering=True)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     cfg = config.load(Path(args.config) if args.config else None)
-    return COMMANDS[args.command][0](cfg, args) or 0
+    try:
+        return COMMANDS[args.command][0](cfg, args) or 0
+    except KeyboardInterrupt:
+        return 130
+    except Exception as e:
+        if getattr(sys, "frozen", False) and args.command == "start":
+            # A double-clicked window would close before the message is read.
+            print(f"錯誤 / error: {e}")
+            input("按 Enter 結束 / press Enter to exit")
+            return 1
+        raise
 
 
 if __name__ == "__main__":
