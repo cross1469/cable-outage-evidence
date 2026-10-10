@@ -7,7 +7,9 @@ slow or hung modem can only delay the modem worker, never the probe loop.
 import email.utils
 import http.cookiejar
 import json
+import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Dict, List, Optional, Tuple
@@ -29,6 +31,11 @@ class ModemAuthError(ModemError):
     """The modem answered but rejected the username or password."""
 
 
+class ModemUnsupported(ModemError):
+    """The device answers HTTP but is not a Hitron CODA web API (another brand
+    or firmware). Retrying with other credentials cannot help."""
+
+
 class ModemResponseError(ModemError):
     """The modem answered, but not with usable data (errCode other than 000,
     or not JSON). An expired session looks like this; the next read logs in."""
@@ -47,14 +54,26 @@ class HitronClient:
     def login(self) -> None:
         body = urllib.parse.urlencode({"model": json.dumps(
             {"username": self._username, "password": self._password})}).encode()
+        self.logged_in = False
         try:
             with self.opener.open(self.base + "/1/Device/Users/Login", data=body, timeout=4) as r:
-                text = r.read().decode("utf-8", "replace")
+                text = r.read(65536).decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            # An HTTP error page (404, 405...) means there is no such API here.
+            raise ModemUnsupported(f"login page answered HTTP {e.code}{_model_note(self.base)}") from None
         except OSError as e:
-            self.logged_in = False
             raise ModemUnreachable(f"no answer from {self.base} ({type(e).__name__})") from None
+        # A Hitron answers JSON with a "result" field. Anything else (another
+        # brand's login page, a redirect to HTML) is not this API at all, and
+        # must not be reported as a wrong password.
+        try:
+            reply = json.loads(text)
+        except ValueError:
+            reply = None
+        if not isinstance(reply, dict) or "result" not in reply:
+            raise ModemUnsupported(f"not a Hitron CODA web API{_model_note(self.base)}")
         # The response never echoes the credentials; only the result is checked.
-        self.logged_in = '"result":"success"' in text.replace(" ", "")
+        self.logged_in = str(reply.get("result")).lower() == "success"
         if not self.logged_in:
             raise ModemAuthError("login rejected: check modem_username and modem_password")
 
@@ -75,6 +94,8 @@ class HitronClient:
             with self.opener.open(url, timeout=timeout or TIMEOUTS.get(endpoint, 4)) as r:
                 raw = r.read()
                 date = r.headers.get("Date")
+        except urllib.error.HTTPError as e:
+            raise ModemResponseError(f"{endpoint}: HTTP {e.code}") from None
         except OSError as e:
             raise ModemUnreachable(f"{endpoint}: no answer ({type(e).__name__})") from None
         try:
@@ -85,6 +106,38 @@ class HitronClient:
             self.logged_in = False
             raise ModemResponseError(f"{endpoint}: errCode {data.get('errCode')!r}")
         return data, parse_http_date(date)
+
+
+VENDORS = ("Hitron", "CODA", "Compal", "CBN", "Connect Box", "Technicolor", "Arris", "ARRIS", "Sagemcom",
+           "Ubee", "Netgear", "NETGEAR", "Askey", "Sercomm", "Huawei", "ZTE", "Motorola", "Castlenet", "Casa")
+
+
+def identify(base_url: str, timeout: float = 4) -> str:
+    """Brand words and the page title found on the modem's home page, e.g.
+    "CBN; title: CBN CH8568". Empty if nothing could be read."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(base_url.rstrip("/") + "/", timeout=timeout) as r:
+            html = r.read(262144).decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        try:
+            html = e.read(262144).decode("utf-8", "replace")
+        except OSError:
+            return ""
+    except OSError:
+        return ""
+    found = []
+    for v in VENDORS:
+        if v.lower() in html.lower() and v.lower() not in (f.lower() for f in found):
+            found.append(v)
+    m = re.search(r"<title[^>]*>\s*([^<]{1,80}?)\s*</title>", html, re.IGNORECASE)
+    parts = found[:3] + ([f"title: {m.group(1)}"] if m and m.group(1).strip() else [])
+    return "; ".join(parts)
+
+
+def _model_note(base_url: str) -> str:
+    who = identify(base_url)
+    return f" (found: {who})" if who else ""
 
 
 def parse_http_date(value: Optional[str]) -> Optional[float]:

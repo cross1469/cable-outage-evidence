@@ -186,7 +186,7 @@ class WorkerAgainstFakeModem(unittest.TestCase):
         self.assertTrue(wait_for(lambda: notices))
         w.stop()
         self.assertEqual([n[0] for n in notices], [modem_worker.UNREACHABLE])
-        self.assertIn("modem_url", notices[0][1])
+        self.assertIn("數據機位址", notices[0][1])
 
     def test_bad_responses_then_recovery_are_announced(self):
         w, store = self.worker()
@@ -220,3 +220,47 @@ class MonitorKeepsProbingWhenModemFails(unittest.TestCase):
             self.assertGreaterEqual(m.sequence, 5)
             self.assertEqual(m.modem.status, modem_worker.AUTH_FAILED)
         fake.close()
+
+
+class ForeignModem(unittest.TestCase):
+    """Another brand at the modem address (found with a CBN in the field):
+    it must be reported as unsupported, never as a wrong password."""
+
+    def setUp(self):
+        self.fake = FakeHitron(foreign_title="CBN CH8568 Gateway")
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.fake.close()
+        self.tmp.cleanup()
+
+    def test_identify_reads_brand_and_title(self):
+        who = hitron.identify(self.fake.url)
+        self.assertIn("CBN", who)
+        self.assertIn("title: CBN CH8568 Gateway", who)
+
+    def test_login_raises_unsupported_not_auth(self):
+        client = hitron.HitronClient(self.fake.url, "admin", "password")
+        with self.assertRaises(hitron.ModemUnsupported) as ctx:
+            client.login()
+        self.assertIn("CBN", str(ctx.exception))
+        self.assertNotIsInstance(ctx.exception, hitron.ModemAuthError)
+
+    def test_http_error_login_is_unsupported(self):
+        self.fake.foreign_status = 404
+        with self.assertRaises(hitron.ModemUnsupported):
+            hitron.HitronClient(self.fake.url, "admin", "password").login()
+
+    def test_worker_announces_once_and_stops_trying(self):
+        cfg = config.Config(modem_url=self.fake.url, data_dir=self.tmp.name, modem_state_poll_interval_sec=1)
+        w = modem_worker.ModemWorker(cfg, storage.Store(cfg.data_path))
+        notices = []
+        w.on_status = lambda status, message: notices.append((status, message))
+        w.start()
+        self.assertTrue(wait_for(lambda: notices))
+        time.sleep(3)
+        w.stop()
+        self.assertEqual([n[0] for n in notices], [modem_worker.UNSUPPORTED])
+        self.assertIn("不是 Hitron CODA", notices[0][1])
+        self.assertNotIn("帳密錯誤", notices[0][1])
+        self.assertEqual(self.fake.login_attempts, 1)

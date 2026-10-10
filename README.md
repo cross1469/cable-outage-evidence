@@ -25,7 +25,8 @@
 ingress）的特徵。工具量不到 ingress 本身，但能把證據整理好，請 ISP 用他們的儀器
 檢查上行。
 
-第一版支援 Hitron CODA 系列數據機。其他型號歡迎提供 API 資料或 PR。
+第一版支援 Hitron CODA 系列數據機。其他型號（例如 CBN）仍然可以記錄斷線，只是報告裡沒有 DOCSIS 日誌與
+頻道狀態；程式會偵測並顯示型號，歡迎到 Issues 回報，或提供 API 資料、PR。
 
 詳細規則見 [docs/spec.md](docs/spec.md)。
 

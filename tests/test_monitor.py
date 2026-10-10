@@ -50,10 +50,18 @@ class NearTargets(unittest.TestCase):
         p.check_near_targets()
         self.assertEqual(p.near_targets(), ("192.168.1.1", None))
 
-    def test_modem_address_equal_to_router_is_probed_once(self):
+    def test_modem_that_is_also_the_gateway_is_probed_as_the_modem(self):
+        # Cable modems in gateway mode (e.g. a CBN at 192.168.0.1) are the
+        # router too: one device, one probe, labelled as the modem.
         p = self.path({"192.168.1.1"}, modem_url="http://192.168.1.1")
         p.check_near_targets()
-        self.assertEqual(p.near_targets(), ("192.168.1.1", None))
+        self.assertEqual(p.near_targets(), (None, "192.168.1.1"))
+
+    def test_modem_still_pinged_with_reading_off(self):
+        p = self.path({"192.168.1.1", "192.168.0.1"})
+        p.cfg.modem_type = "none"
+        p.check_near_targets()
+        self.assertEqual(p.near_targets(), ("192.168.1.1", "192.168.0.1"))
 
 
 if __name__ == "__main__":

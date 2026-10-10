@@ -10,12 +10,12 @@ import getpass
 from typing import Callable, List, Tuple
 
 from . import config, hitron
-from .modem_worker import AUTH_FAILED, BAD_RESPONSE, OK, UNREACHABLE, status_message
+from .modem_worker import AUTH_FAILED, BAD_RESPONSE, OK, UNREACHABLE, UNSUPPORTED, status_message
 
 Ask = Callable[[str], str]
 
 
-def check(cfg: config.Config) -> Tuple[str, List[str]]:
+def check(cfg: config.Config, context: str = "check") -> Tuple[str, List[str]]:
     """Logs in once and reads the channel state. Returns (status, lines to show);
     the lines never contain the password."""
     client = hitron.HitronClient(cfg.modem_url, cfg.modem_username, cfg.modem_password)
@@ -35,8 +35,9 @@ def check(cfg: config.Config) -> Tuple[str, List[str]]:
         ]
     except hitron.ModemError as e:
         kind = (AUTH_FAILED if isinstance(e, hitron.ModemAuthError) else
+                UNSUPPORTED if isinstance(e, hitron.ModemUnsupported) else
                 UNREACHABLE if isinstance(e, hitron.ModemUnreachable) else BAD_RESPONSE)
-        return kind, [status_message(kind, str(e), cfg, monitoring=False)]
+        return kind, [status_message(kind, str(e), cfg, context)]
     finally:
         client.logout()
 
@@ -45,7 +46,9 @@ def ask_settings(cfg: config.Config, ask: Ask, secret: Ask) -> None:
     """Asks for the modem address and login; Enter keeps the value shown."""
     url = ask(f"數據機位址 modem address [{cfg.modem_url}]（輸入 none 表示不讀數據機）: ").strip()
     if url.lower() == "none":
+        # No cable modem at all: nothing to read and nothing to ping.
         cfg.modem_type = "none"
+        cfg.modem_url = ""
         return
     cfg.modem_type = "hitron-coda"
     if url:
@@ -73,6 +76,7 @@ def interactive(cfg: config.Config, ask: Ask = None, secret: Ask = None,
     original = (cfg.modem_username, cfg.modem_password)
 
     def off():
+        # Reading off, but the address stays: the modem is still pinged as a layer.
         cfg.modem_type = "none"
         cfg.modem_username, cfg.modem_password = original
         out("不讀數據機：只記錄斷線，報告裡不會有 DOCSIS 日誌與頻道狀態。")
@@ -83,12 +87,16 @@ def interactive(cfg: config.Config, ask: Ask = None, secret: Ask = None,
         if cfg.modem_type == "none":
             return off()
         out("正在連線數據機…")
-        status, lines = check(cfg)
+        status, lines = check(cfg, "dialog")
         for line in lines:
             out(line)
         if status == OK:
             return OK
-        choice = ask("1 重新輸入（預設）  2 不讀數據機，只記錄斷線  3 先照這樣存（例如數據機暫時關機）: ").strip()
+        if status == UNSUPPORTED:
+            # Other credentials cannot help, so not reading is the default.
+            choice = ask("1 換一個數據機位址重試  2 不讀數據機，只記錄斷線（預設）: ").strip() or "2"
+        else:
+            choice = ask("1 重新輸入（預設）  2 不讀數據機，只記錄斷線  3 先照這樣存（例如數據機暫時關機）: ").strip()
         if choice == "2":
             return off()
         if choice == "3":

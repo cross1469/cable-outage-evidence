@@ -21,7 +21,8 @@ class FakeHitron:
     modem. drop_ofdma_after makes OFDMA channel 1 leave OPERATE after that many
     UsOfdm reads. clock_offset shifts the Date header (modem clock skew)."""
 
-    def __init__(self, username="admin", password="secret", drop_ofdma_after=None, clock_offset=0):
+    def __init__(self, username="admin", password="secret", drop_ofdma_after=None, clock_offset=0,
+                 foreign_title=None):
         self.username, self.password = username, password
         self.drop_ofdma_after = drop_ofdma_after
         self.clock_offset = clock_offset
@@ -29,6 +30,9 @@ class FakeHitron:
         self.logins = 0
         self.login_attempts = 0
         self.answer_errors = False   # answer every read with errCode 002
+        # Imitates another brand: HTML for everything, like a CBN login page.
+        self.foreign_title = foreign_title
+        self.foreign_status = 200
         self.token = "abc123"
         fake = self
 
@@ -50,9 +54,22 @@ class FakeHitron:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _send_html(self):
+                body = (f"<html><head><title>{fake.foreign_title}</title></head>"
+                        "<body>CBN login<form></form></body></html>").encode()
+                self.send_response(fake.foreign_status)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
                 form = urllib.parse.parse_qs(self.rfile.read(length).decode())
+                if fake.foreign_title:
+                    if self.path.startswith("/1/Device/Users/Login"):
+                        fake.login_attempts += 1
+                    return self._send_html()
                 if self.path.startswith("/1/Device/Users/Login"):
                     fake.login_attempts += 1
                     creds = json.loads(form.get("model", ["{}"])[0])
@@ -65,6 +82,8 @@ class FakeHitron:
                     self._send({"result": "success"})
 
             def do_GET(self):
+                if fake.foreign_title:
+                    return self._send_html()
                 endpoint = self.path.split("/1/Device/CM/", 1)[-1].split("?", 1)[0]
                 if f"session={fake.token}" not in (self.headers.get("Cookie") or ""):
                     return self._send({"errCode": "001", "errMsg": "not logged in"})

@@ -63,9 +63,29 @@ class Dialogue(unittest.TestCase):
         self.assertEqual(status, setup.KEPT)
         self.assertEqual(cfg.modem_url, url)
 
+    def test_unsupported_modem_defaults_to_not_reading(self):
+        foreign = FakeHitron(foreign_title="CBN CH8568")
+        try:
+            cfg, status = self.run_dialogue([foreign.url, "", ""], ["password"])
+        finally:
+            foreign.close()
+        self.assertEqual(status, setup.OFF)
+        self.assertEqual(cfg.modem_type, "none")
+        self.assertEqual(cfg.modem_url, foreign.url)     # still pinged as a layer
+        text = "\n".join(self.out)
+        self.assertIn("不是 Hitron CODA", text)
+        self.assertNotIn("帳密錯誤", text)
+
+    def test_dialog_wording_does_not_send_to_init(self):
+        self.run_dialogue([self.fake.url, "", "2"], ["wrong"])
+        text = "\n".join(self.out)
+        self.assertIn("請重新輸入帳密", text)
+        self.assertNotIn("請執行 init", text)
+
     def test_none_turns_modem_reading_off(self):
         cfg, status = self.run_dialogue(["none"], [])
         self.assertEqual((status, cfg.modem_type), (setup.OFF, "none"))
+        self.assertEqual(cfg.modem_url, "")              # no modem at all: nothing pinged
 
     def test_address_without_scheme(self):
         cfg = config.Config()
@@ -123,3 +143,22 @@ class StartCommand(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StartWithUnsupportedModem(unittest.TestCase):
+    def test_offers_to_stop_reading_and_keeps_pinging(self):
+        foreign = FakeHitron(foreign_title="CBN CH8568")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.ini"
+            config.save(config.Config(modem_url=foreign.url), path)
+            args = mock.Mock(config=str(path))
+            with mock.patch("sys.stdin") as stdin, \
+                    mock.patch("builtins.input", scripted([""])), \
+                    mock.patch.object(cli, "cmd_run", lambda cfg, args: None), \
+                    mock.patch("builtins.print"):
+                stdin.isatty.return_value = True
+                cli.cmd_start(config.load(path), args)
+            cfg = config.load(path)
+            self.assertEqual(cfg.modem_type, "none")
+            self.assertEqual(cfg.modem_url, foreign.url)
+        foreign.close()

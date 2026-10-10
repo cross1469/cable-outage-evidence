@@ -55,11 +55,16 @@ class PathState:
         ping. One that stops answering is dropped only while the Internet is
         reachable: during an outage its silence is evidence, not a setting."""
         gw, _ = self.snapshot()
-        modem = self.cfg.modem_address if self.cfg.modem_url and self.cfg.modem_type != "none" else None
+        # Pinged whenever an address is configured, even with reading off.
+        modem = self.cfg.modem_address if self.cfg.modem_url else None
+        lan = gw
         if modem == gw:
-            modem = None        # the configured modem address is the home router itself
+            # The cable modem is the router as well (gateway mode, common for
+            # ISP-supplied units): one device, probed as the modem.
+            lan = None
         online = None
-        for attr, address, label in (("lan_probe", gw, "home router"), ("modem_probe", modem, "modem")):
+        modem_label = "modem (also the default gateway)" if modem and modem == gw else "modem"
+        for attr, address, label in (("lan_probe", lan, "home router"), ("modem_probe", modem, modem_label)):
             current = getattr(self, attr)
             if self._answers(address):
                 if current != address:

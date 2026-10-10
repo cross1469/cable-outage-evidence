@@ -22,29 +22,44 @@ SIGNALS_HEADER = hitron.SUMMARY_HEADER + ["SkewSec"]
 
 # Modem reading status. Probing and outage detection never depend on it.
 OK, UNREACHABLE, AUTH_FAILED, BAD_RESPONSE = "ok", "unreachable", "auth_failed", "bad_response"
+UNSUPPORTED = "unsupported"
 # A wrong password is retried this rarely, so the modem never locks the account.
 AUTH_RETRY_SEC = 300
+# Another brand of modem will not turn into a Hitron; checked again hourly in
+# case the address was briefly answered by something else.
+UNSUPPORTED_RETRY_SEC = 3600
 # Timeouts and odd answers happen (an expired session looks like one), so a
 # status change is announced only after this many reads in a row fail.
 FAILURES_BEFORE_NOTICE = 3
 
 
-def status_message(status: str, detail: str, cfg, monitoring: bool = True) -> str:
-    """The notice shown when reading changes status. monitoring=False drops
-    the lines about the running monitor, for one-off commands."""
-    running = "探測與斷線偵測照常進行。" if monitoring else ""
+def status_message(status: str, detail: str, cfg, context: str = "monitor") -> str:
+    """The notice shown when reading changes status.
+
+    context: "monitor" while monitoring, "check" for the one-off modem-check
+    command, "dialog" inside the setup dialogue (which is where credentials
+    are being entered, so it does not send the user to init).
+    """
+    running = "探測與斷線偵測照常進行。" if context == "monitor" else ""
     if status == OK:
         return "數據機讀取正常 / modem readings OK"
     if status == UNREACHABLE:
-        return (f"數據機連不上 / modem unreachable ({detail})。請確認 modem_url（目前 {cfg.modem_url}）；"
-                "數據機接在家用路由器後面時，常見位址是 http://192.168.0.1 或 http://192.168.100.1。"
-                + running)
+        return (f"數據機連不上 / modem unreachable ({detail})。請確認數據機位址（目前 {cfg.modem_url}）；"
+                "常見位址是 http://192.168.0.1 或 http://192.168.100.1。" + running)
     if status == AUTH_FAILED:
-        return (f"數據機帳密錯誤 / modem login rejected。請執行 init 重新設定 modem_username 和 "
-                f"modem_password（預設 admin / password，有些 ISP 會改掉或印在數據機貼紙上）。"
-                + (f"{AUTH_RETRY_SEC // 60} 分鐘後再試一次。" if monitoring else "") + running)
+        where = "請重新輸入帳密" if context == "dialog" else "請執行 init 重新設定 modem_username 和 modem_password"
+        retry = f"{AUTH_RETRY_SEC // 60} 分鐘後再試一次。" if context == "monitor" else ""
+        return (f"數據機帳密錯誤 / modem login rejected。{where}（預設 admin / password，有些 ISP 會改掉或"
+                f"印在數據機貼紙上）。" + retry + running)
+    if status == UNSUPPORTED:
+        return (f"這台數據機不是 Hitron CODA，目前不支援讀取 / unsupported modem ({detail})。"
+                "換帳密也不會成功。斷線偵測仍然可以用，只是報告裡不會有 DOCSIS 日誌與頻道狀態。"
+                "歡迎到 https://github.com/orsmile/cable-outage-evidence/issues 提供數據機型號，協助支援。"
+                + running)
     return (f"數據機回應異常 / unexpected modem response ({detail})。可能不是支援的 Hitron CODA 韌體。"
             + running)
+
+
 FAST_HEADER = ["Timestamp", "Trigger", "Tick", "TickLateMs", "CoreOK", "CoreMs", "SlowRead", "SkewSec",
                "UsScQamOperate", "UsScQamCount", "UsOfdmaOperate", "UsOfdmaCount",
                "DsOfdmLocked", "DsOfdmCount", "DsScQamLocked", "DsScQamCount"]
@@ -121,13 +136,18 @@ class ModemWorker:
         try:
             with self.login_lock:
                 if not self.client.logged_in:
-                    if self.status == AUTH_FAILED and time.monotonic() < self.next_login:
+                    if self.status in (AUTH_FAILED, UNSUPPORTED) and time.monotonic() < self.next_login:
                         # Not retried yet: no request reaches the modem.
+                        if self.status == UNSUPPORTED:
+                            raise hitron.ModemUnsupported("not a Hitron CODA (waiting before the next try)")
                         raise hitron.ModemAuthError("login rejected (waiting before the next try)")
                     try:
                         self.client.login()
                     except hitron.ModemAuthError:
                         self.next_login = time.monotonic() + AUTH_RETRY_SEC
+                        raise
+                    except hitron.ModemUnsupported:
+                        self.next_login = time.monotonic() + UNSUPPORTED_RETRY_SEC
                         raise
             data, modem_epoch = self.client.get(endpoint, timeout)
         except hitron.ModemError as e:
@@ -144,6 +164,8 @@ class ModemWorker:
         self.failures += 1
         if isinstance(err, hitron.ModemAuthError):
             self._set_status(AUTH_FAILED, str(err))
+        elif isinstance(err, hitron.ModemUnsupported):
+            self._set_status(UNSUPPORTED, str(err))
         elif self.failures >= FAILURES_BEFORE_NOTICE:
             self._set_status(UNREACHABLE if isinstance(err, hitron.ModemUnreachable) else BAD_RESPONSE, str(err))
 

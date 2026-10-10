@@ -125,10 +125,16 @@ def cmd_start(cfg, args):
         config.save(cfg, path)
         print(f"已儲存設定 / saved {path}")
     elif cfg.modem_type != "none":
-        status, lines = setup.check(cfg)
+        status, lines = setup.check(cfg, "check")
         for line in lines:
             print(line)
-        if status == setup.AUTH_FAILED and interactive:
+        if status == setup.UNSUPPORTED and interactive:
+            answer = input("要改成不讀數據機（只記錄斷線），以後不再檢查嗎？[Y/n] ").strip().lower()
+            if answer in ("", "y", "yes"):
+                cfg.modem_type = "none"     # the address stays: the modem is still pinged
+                config.save(cfg, path)
+                print(f"已更新設定 / saved {path}")
+        elif status == setup.AUTH_FAILED and interactive:
             answer = input("要現在重新輸入數據機帳密嗎？[Y/n] ").strip().lower()
             if answer in ("", "y", "yes"):
                 # Every outcome is a decision (verified, kept on purpose, or
