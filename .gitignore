@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+/build/
+/dist/
+*.spec
+.venv/
+# Never commit collected data or local config
+/data/
+config.ini
+*.local.ini
