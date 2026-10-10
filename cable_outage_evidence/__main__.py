@@ -6,7 +6,7 @@ import signal
 import sys
 from pathlib import Path
 
-from . import __version__, analysis, config, hitron, monitor, platform_net, report, storage, ucid
+from . import __version__, analysis, config, hitron, monitor, platform_net, report, setup, storage, ucid
 
 
 def cmd_run(cfg, args):
@@ -40,20 +40,17 @@ def cmd_discover_path(cfg, args):
     print(f"ISP first hop: {platform_net.first_isp_hop(hops, [gw, cfg.modem_address]) or 'unknown'}")
 
 
+def _config_path(args) -> Path:
+    return Path(args.config) if args.config else config.default_config_path()
+
+
 def cmd_init(cfg, args):
-    import getpass
-    path = Path(args.config) if args.config else config.default_config_path()
+    path = _config_path(args)
     if path.exists() and not args.force:
         print(f"{path} already exists (use --force to overwrite)")
         return 1
     if sys.stdin.isatty():
-        url = input(f"modem address [{cfg.modem_url}] (none to skip modem reading): ").strip()
-        if url.lower() == "none":
-            cfg.modem_type = "none"
-        else:
-            cfg.modem_url = url or cfg.modem_url
-            cfg.modem_username = input(f"modem username [{cfg.modem_username}]: ").strip() or cfg.modem_username
-            cfg.modem_password = getpass.getpass("modem password (not shown; Enter keeps the factory default): ") or cfg.modem_password
+        setup.interactive(cfg)
     print(f"wrote {config.save(cfg, path)}")
 
 
@@ -62,26 +59,10 @@ def cmd_modem_check(cfg, args):
     if cfg.modem_type == "none":
         print("modem reading is off (modem_type = none)")
         return 1
-    client = hitron.HitronClient(cfg.modem_url, cfg.modem_username, cfg.modem_password)
-    try:
-        client.login()
-        data = {ep: client.get(ep)[0] for ep in ("SysInfo", "UsInfo", "UsOfdm", "DsInfo", "DsOfdm")}
-        c = hitron.counts(data["UsInfo"], data["UsOfdm"], data["DsInfo"], data["DsOfdm"])
-        print(f"network access: {hitron.clean(data['SysInfo'].get('ntAccess'))}")
-        print(f"upstream SC-QAM {c['UsScQamOperate']}/{c['UsScQamCount']} OPERATE, "
-              f"OFDMA {c['UsOfdmaOperate']}/{c['UsOfdmaCount']} OPERATE")
-        print(f"downstream SC-QAM {c['DsScQamLocked']}/{c['DsScQamCount']} locked, "
-              f"OFDM {c['DsOfdmLocked']}/{c['DsOfdmCount']} locked")
-        entries = hitron.log_entries(client.get("Log")[0])
-        print(f"event log: {len(entries)} entries")
-    except hitron.ModemError as e:
-        from .modem_worker import status_message, UNREACHABLE, AUTH_FAILED, BAD_RESPONSE
-        kind = (AUTH_FAILED if isinstance(e, hitron.ModemAuthError) else
-                UNREACHABLE if isinstance(e, hitron.ModemUnreachable) else BAD_RESPONSE)
-        print(status_message(kind, str(e), cfg, monitoring=False))
-        return 1
-    finally:
-        client.logout()
+    status, lines = setup.check(cfg)
+    for line in lines:
+        print(line)
+    return 0 if status == setup.OK else 1
 
 
 def _emit(text, args):
@@ -129,18 +110,33 @@ def cmd_paths(cfg, args):
 
 
 def cmd_start(cfg, args):
-    """What a double-click does: set up on first use, check the modem, monitor."""
-    path = Path(args.config) if args.config else config.default_config_path()
+    """What a double-click does: set up on first use, check the modem, monitor.
+
+    Settings are saved only once the modem accepted them or the user decided;
+    a wrong password found later is offered for re-entry right here.
+    """
+    path = _config_path(args)
+    interactive = sys.stdin.isatty()
     print(f"cable-outage-evidence {__version__}")
     if not path.exists():
-        print("第一次使用，先建立設定檔。直接按 Enter 會使用括號裡的預設值。")
-        args.force = False
-        cmd_init(cfg, args)
-        cfg = config.load(path)
-    print(f"設定檔：{path}")
-    print(f"資料夾：{cfg.data_path}")
-    if cfg.modem_type != "none":
-        cmd_modem_check(cfg, args)
+        print("第一次使用，先設定數據機。直接按 Enter 會使用括號裡的值（Hitron 原廠預設）。")
+        if interactive:
+            setup.interactive(cfg)
+        config.save(cfg, path)
+        print(f"已儲存設定 / saved {path}")
+    elif cfg.modem_type != "none":
+        status, lines = setup.check(cfg)
+        for line in lines:
+            print(line)
+        if status == setup.AUTH_FAILED and interactive:
+            answer = input("要現在重新輸入數據機帳密嗎？[Y/n] ").strip().lower()
+            if answer in ("", "y", "yes"):
+                # Every outcome is a decision (verified, kept on purpose, or
+                # modem reading off with the old login), so it is saved.
+                setup.interactive(cfg)
+                config.save(cfg, path)
+                print(f"已更新設定 / saved {path}")
+    print(f"資料夾 data: {cfg.data_path}")
     print("開始監控。這個視窗要保持開著；要停止請按 Ctrl+C。")
     print("事件報告：在命令列執行 cable-outage-evidence report（或 evidence / timeline）。")
     cmd_run(cfg, args)
