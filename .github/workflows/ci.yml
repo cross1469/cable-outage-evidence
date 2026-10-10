@@ -14,8 +14,8 @@ jobs:
         python: ["3.9", "3.13"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       - name: Unit tests and live platform checks
@@ -38,8 +38,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
       - run: python -m pip install pyinstaller
@@ -51,7 +51,7 @@ jobs:
           ./dist/cable-outage-evidence.exe --version
           printf '[monitor]\nmodem_type = none\nmodem_url =\ndata_dir = %s\n' "$RUNNER_TEMP/exe-data" > "$RUNNER_TEMP/exe.ini"
           ./dist/cable-outage-evidence.exe --config "$RUNNER_TEMP/exe.ini" once
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows-exe
           path: dist/*.zip

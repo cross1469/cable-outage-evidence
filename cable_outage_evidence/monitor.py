@@ -29,6 +29,11 @@ class PathState:
         self.lock = threading.Lock()
         self.gateway: Optional[str] = platform_net.default_gateway()
         self.first_hop: Optional[str] = None
+        # Near-end targets actually probed: only those that answer ping. Some
+        # routers never answer it, and probing one would turn every outage
+        # into a false "home router unreachable" (spec §3).
+        self.lan_probe: Optional[str] = None
+        self.modem_probe: Optional[str] = None
         self._discover_now = threading.Event()
         self._discover_now.set()
         self._stop = threading.Event()
@@ -36,6 +41,42 @@ class PathState:
     def snapshot(self):
         with self.lock:
             return self.gateway, self.first_hop
+
+    def near_targets(self):
+        with self.lock:
+            return self.lan_probe, self.modem_probe
+
+    def _answers(self, address: Optional[str]) -> bool:
+        return bool(address) and platform_net.ping_with_retries(
+            self.pinger, address, 2, self.cfg.ping_timeout_sec) is not None
+
+    def check_near_targets(self) -> None:
+        """Adopts the home router and the modem as probe targets if they answer
+        ping. One that stops answering is dropped only while the Internet is
+        reachable: during an outage its silence is evidence, not a setting."""
+        gw, _ = self.snapshot()
+        modem = self.cfg.modem_address if self.cfg.modem_url and self.cfg.modem_type != "none" else None
+        if modem == gw:
+            modem = None        # the configured modem address is the home router itself
+        online = None
+        for attr, address, label in (("lan_probe", gw, "home router"), ("modem_probe", modem, "modem")):
+            current = getattr(self, attr)
+            if self._answers(address):
+                if current != address:
+                    log.info("%s %s answers ping; probed", label, address)
+                value = address
+            elif current is not None and current == address:
+                if online is None:
+                    online = self._answers(self.cfg.path_discovery_target)
+                value = None if online else current
+                if online:
+                    log.info("%s %s stopped answering ping while online; not probed", label, address)
+            else:
+                if address and current is None:
+                    log.info("%s %s does not answer ping; not probed", label, address)
+                value = None
+            with self.lock:
+                setattr(self, attr, value)
 
     def start(self):
         threading.Thread(target=self._gateway_loop, name="gateway", daemon=True).start()
@@ -54,6 +95,7 @@ class PathState:
                 if changed:
                     # Never report the old topology against a new gateway.
                     self.first_hop = None
+                    self.lan_probe = None
             if changed:
                 log.info("default gateway changed to %s", gw or "none")
                 self._discover_now.set()
@@ -67,6 +109,7 @@ class PathState:
             self.discover()
 
     def discover(self) -> Optional[str]:
+        self.check_near_targets()
         gw, _ = self.snapshot()
         if gw is None:
             return None
@@ -132,11 +175,9 @@ class Monitor:
         during an outage the pings take retries x timeout to give up."""
         timestamp = timestamp or storage.now_text()
         gw, hop = self.path.snapshot()
-        modem = self.cfg.modem_address if self.cfg.modem_url else None
-        if modem == gw:
-            modem = None    # the "modem" address is the home router itself
+        lan, modem = self.path.near_targets()
         futures = {
-            "lan": self.pool.submit(self._ping, gw),
+            "lan": self.pool.submit(self._ping, lan),
             "modem": self.pool.submit(self._ping, modem),
             "hop": self.pool.submit(self._ping, hop),
         }
