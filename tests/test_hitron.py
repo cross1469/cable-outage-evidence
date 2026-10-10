@@ -74,6 +74,17 @@ class Evidence(unittest.TestCase):
         self.assertEqual(evidence.evidence_kind("67061601", ""), "none")
 
 
+def wait_for(condition, timeout=20.0):
+    """Polls instead of sleeping a fixed time: connection refusals take about
+    2 s on Windows and microseconds elsewhere, so fixed sleeps are flaky."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def read_csv(path):
     with open(path, encoding="utf-8", newline="") as fh:
         return list(csv.DictReader(fh))
@@ -100,9 +111,9 @@ class WorkerAgainstFakeModem(unittest.TestCase):
     def test_periodic_read_writes_signals_channels_and_log(self):
         w, store = self.worker(clock_offset=3)
         w.start()
-        time.sleep(2.5)
-        w.stop()
         day = store.day_dir()
+        wait_for(lambda: (day / "docsis-log.csv").exists())
+        w.stop()
         signals = read_csv(day / "modem-signals.csv")
         self.assertEqual(signals[0]["Reason"], "Periodic")
         self.assertEqual(signals[0]["ReadOK"], "1")
@@ -115,9 +126,9 @@ class WorkerAgainstFakeModem(unittest.TestCase):
     def test_state_change_writes_both_observations_and_enters_fast_mode(self):
         w, store = self.worker(drop_ofdma_after=2)
         w.start()
-        time.sleep(5.5)
-        w.stop()
         day = store.day_dir()
+        wait_for(lambda: (day / "fast-poll.csv").exists() and len(read_csv(day / "fast-poll.csv")) >= 2)
+        w.stop()
         rows = read_csv(day / "modem-channels.csv")
         reasons = [r["Reason"] for r in rows if r["Kind"] == "us_ofdma"]
         self.assertIn("PrevObserved", reasons)
@@ -137,7 +148,8 @@ class WorkerAgainstFakeModem(unittest.TestCase):
         notices = []
         w.on_status = lambda status, message: notices.append(status)
         w.start()
-        time.sleep(3.5)          # several 1 s state polls
+        self.assertTrue(wait_for(lambda: notices))
+        time.sleep(3)            # several more 1 s state polls: none may log in again
         w.stop()
         self.assertEqual(notices, [modem_worker.AUTH_FAILED])
         # One login attempt; the retry waits AUTH_RETRY_SEC.
@@ -171,7 +183,7 @@ class WorkerAgainstFakeModem(unittest.TestCase):
         notices = []
         w.on_status = lambda status, message: notices.append((status, message))
         w.start()
-        time.sleep(4.5)
+        self.assertTrue(wait_for(lambda: notices))
         w.stop()
         self.assertEqual([n[0] for n in notices], [modem_worker.UNREACHABLE])
         self.assertIn("modem_url", notices[0][1])
@@ -182,9 +194,9 @@ class WorkerAgainstFakeModem(unittest.TestCase):
         notices = []
         w.on_status = lambda status, message: notices.append(status)
         w.start()
-        time.sleep(4.5)
+        self.assertTrue(wait_for(lambda: notices))
         self.fake.answer_errors = False
-        time.sleep(2.5)
+        self.assertTrue(wait_for(lambda: len(notices) >= 2))
         w.stop()
         self.assertEqual(notices, [modem_worker.BAD_RESPONSE, modem_worker.OK])
 
