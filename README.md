@@ -37,6 +37,10 @@ py -3 -m cable_outage_evidence modem-check     # 確認讀得到數據機
 py -3 -m cable_outage_evidence discover-path   # 找出預設閘道與 ISP 第一跳
 py -3 -m cable_outage_evidence once            # 取樣一次並印出
 py -3 -m cable_outage_evidence run             # 持續監控，Ctrl+C 停止
+py -3 -m cable_outage_evidence report --days 30 --out report.txt   # 給 ISP 的報告
+py -3 -m cable_outage_evidence evidence        # 最近一次事件的完整證據（或加上時間，例如 "2026-09-03 23:26"）
+py -3 -m cable_outage_evidence timeline        # 事件時間軸
+py -3 -m cable_outage_evidence docsis-log      # 收集到的數據機日誌
 py -3 -m unittest discover -s tests -t .       # 測試
 ```
 
@@ -44,7 +48,7 @@ macOS / Linux 用 `python3` 取代 `py -3`。
 
 數據機帳密預設為 Hitron 原廠的 `admin` / `password`。如果你的 ISP 改過，執行 `init` 重新設定
 （密碼只存在本機的設定檔），再用 `modem-check` 確認連得上。數據機連不上或帳密錯誤時，
-監控會印出通知與處理建議，探測和斷線偵測照常進行。事件分類、時間軸和給 ISP 的報告還在開發中。
+監控會印出通知與處理建議，探測和斷線偵測照常進行。
 
 ## English
 

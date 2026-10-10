@@ -6,7 +6,7 @@ import signal
 import sys
 from pathlib import Path
 
-from . import __version__, config, hitron, monitor, platform_net, storage
+from . import __version__, analysis, config, hitron, monitor, platform_net, report, storage
 
 
 def cmd_run(cfg, args):
@@ -84,6 +84,41 @@ def cmd_modem_check(cfg, args):
         client.logout()
 
 
+def _emit(text, args):
+    if getattr(args, "out", None):
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"wrote {args.out}")
+    else:
+        sys.stdout.write(text)
+
+
+def cmd_report(cfg, args):
+    _emit(report.summary(cfg.data_path, args.days, not args.no_redact), args)
+
+
+def cmd_evidence(cfg, args):
+    _emit(report.evidence(cfg.data_path, args.time, not args.no_redact), args)
+
+
+def cmd_timeline(cfg, args):
+    _emit(report.timeline(cfg.data_path, args.time, not args.no_redact), args)
+
+
+def cmd_docsis_log(cfg, args):
+    _emit(report.docsis_log(cfg.data_path, args.days, not args.no_redact), args)
+
+
+def cmd_classify(cfg, args):
+    events = analysis.all_events(cfg.data_path)
+    if args.time:
+        events = [e for e in events if e["StartTime"].startswith(args.time)]
+    for e in events:
+        c = analysis.classify_and_save(cfg.data_path, e)
+        print(f"{e['StartTime'][:19]}  {e['Grade']}  {c.cls:<12}  {'; '.join(c.reasons)[:120]}")
+    if not events:
+        print("no matching event")
+
+
 def cmd_paths(cfg, args):
     print(f"config: {Path(args.config) if args.config else config.default_config_path()}")
     print(f"data:   {cfg.data_path}")
@@ -94,6 +129,11 @@ COMMANDS = {
     "once": (cmd_once, "take one sample and print it"),
     "discover-path": (cmd_discover_path, "show the default gateway and ISP first hop"),
     "modem-check": (cmd_modem_check, "log in to the modem once and show its channel state"),
+    "report": (cmd_report, "summary report for the ISP"),
+    "evidence": (cmd_evidence, "full evidence for one event (latest, or TIME)"),
+    "timeline": (cmd_timeline, "timeline of one event (latest, or TIME)"),
+    "docsis-log": (cmd_docsis_log, "the collected DOCSIS event log"),
+    "classify": (cmd_classify, "classify events again (all, or those starting with TIME)"),
     "init": (cmd_init, "write a config file with every default"),
     "paths": (cmd_paths, "print the config and data locations"),
 }
@@ -110,7 +150,17 @@ def main(argv=None):
         sp = sub.add_parser(name, help=text)
         if name == "init":
             sp.add_argument("--force", action="store_true")
+        if name in ("evidence", "timeline", "classify"):
+            sp.add_argument("time", nargs="?", default="", help="start time prefix, e.g. '2026-09-03 23:26'")
+        if name in ("report", "docsis-log"):
+            sp.add_argument("--days", type=int, default=30 if name == "report" else 7)
+        if name in ("report", "evidence", "timeline", "docsis-log"):
+            sp.add_argument("--no-redact", action="store_true", help="do not mask home addresses and MACs")
+            sp.add_argument("--out", help="write to this file (UTF-8) instead of the console")
     args = p.parse_args(argv)
+    if hasattr(sys.stdout, "reconfigure"):
+        # Reports are Chinese; a legacy console code page must not crash them.
+        sys.stdout.reconfigure(errors="replace")
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     cfg = config.load(Path(args.config) if args.config else None)

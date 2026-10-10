@@ -218,6 +218,22 @@ class Monitor:
                 self.on_event_recovered(ev)
         if up.closed:
             self.incident_paths.pop(id(up.closed), None)
+            # The post-recovery window is complete: classify it (spec §7).
+            threading.Thread(target=self._classify, args=(up.closed.start.timestamp,),
+                             name="classify", daemon=True).start()
+
+    def _classify(self, start_ts: str):
+        from . import analysis
+        try:
+            for _ in range(10):
+                ev = analysis.find_event(self.cfg.data_path, start_ts)
+                if ev is not None and ev["StartTime"] == start_ts:
+                    c = analysis.classify_and_save(self.cfg.data_path, ev)
+                    log.info("event %s classified %s; timeline %s", start_ts[:19], c.cls, c.timeline_path)
+                    return
+                time.sleep(1)     # the events.csv row may still wait for TCP results
+        except Exception:
+            log.exception("classifying %s failed", start_ts)
 
     # --- loop ---------------------------------------------------------------------
 

@@ -115,7 +115,7 @@ GRADE_SUMMARY = {
     "P1": "Confirmed outage",
     "P2": "Probable outage (modem unreachable throughout)",
     "P3": "Sustained ICMP loss; TCP/443 still completed",
-    "P4": "Below noise floor; TCP/443 completed",
+    "P4": "Below the sustained threshold; TCP/443 completed",
 }
 
 
