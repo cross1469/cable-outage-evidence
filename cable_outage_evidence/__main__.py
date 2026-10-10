@@ -6,7 +6,7 @@ import signal
 import sys
 from pathlib import Path
 
-from . import __version__, analysis, config, hitron, monitor, platform_net, report, storage
+from . import __version__, analysis, config, hitron, monitor, platform_net, report, storage, ucid
 
 
 def cmd_run(cfg, args):
@@ -108,6 +108,10 @@ def cmd_docsis_log(cfg, args):
     _emit(report.docsis_log(cfg.data_path, args.days, not args.no_redact), args)
 
 
+def cmd_ucid_report(cfg, args):
+    _emit(report.Redactor(not args.no_redact)(ucid.report(cfg.data_path, args.ucid, args.days)), args)
+
+
 def cmd_classify(cfg, args):
     events = analysis.all_events(cfg.data_path)
     if args.time:
@@ -133,6 +137,7 @@ COMMANDS = {
     "evidence": (cmd_evidence, "full evidence for one event (latest, or TIME)"),
     "timeline": (cmd_timeline, "timeline of one event (latest, or TIME)"),
     "docsis-log": (cmd_docsis_log, "the collected DOCSIS event log"),
+    "ucid-report": (cmd_ucid_report, "one upstream channel's T4 / CM-STATUS / channel history"),
     "classify": (cmd_classify, "classify events again (all, or those starting with TIME)"),
     "init": (cmd_init, "write a config file with every default"),
     "paths": (cmd_paths, "print the config and data locations"),
@@ -152,9 +157,11 @@ def main(argv=None):
             sp.add_argument("--force", action="store_true")
         if name in ("evidence", "timeline", "classify"):
             sp.add_argument("time", nargs="?", default="", help="start time prefix, e.g. '2026-09-03 23:26'")
-        if name in ("report", "docsis-log"):
-            sp.add_argument("--days", type=int, default=30 if name == "report" else 7)
-        if name in ("report", "evidence", "timeline", "docsis-log"):
+        if name == "ucid-report":
+            sp.add_argument("ucid", help="upstream channel ID as the CM-STATUS entries name it, e.g. 7")
+        if name in ("report", "docsis-log", "ucid-report"):
+            sp.add_argument("--days", type=int, default={"report": 30, "docsis-log": 7}.get(name, 14))
+        if name in ("report", "evidence", "timeline", "docsis-log", "ucid-report"):
             sp.add_argument("--no-redact", action="store_true", help="do not mask home addresses and MACs")
             sp.add_argument("--out", help="write to this file (UTF-8) instead of the console")
     args = p.parse_args(argv)

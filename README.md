@@ -41,6 +41,7 @@ py -3 -m cable_outage_evidence report --days 30 --out report.txt   # 給 ISP 的
 py -3 -m cable_outage_evidence evidence        # 最近一次事件的完整證據（或加上時間，例如 "2026-09-03 23:26"）
 py -3 -m cable_outage_evidence timeline        # 事件時間軸
 py -3 -m cable_outage_evidence docsis-log      # 收集到的數據機日誌
+py -3 -m cable_outage_evidence ucid-report 7   # 上行頻道 7 的 T4 / CM-STATUS / 頻道掉線串連
 py -3 -m unittest discover -s tests -t .       # 測試
 ```
 

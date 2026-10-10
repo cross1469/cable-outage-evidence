@@ -174,6 +174,34 @@ def _fast_observations(rows: List[Dict[str, str]]) -> List[Observation]:
     return out
 
 
+# Aggregate rows from full reads only: the rows written at fast-mode entry,
+# recovery and exit summarise cached responses and are not observations.
+FRESH_AGGREGATE_REASONS = {"Periodic", "Startup"}
+AGGREGATE_KEYS = ("UsScQamOperateCount", "UsScQamCount", "UsOfdmaOperateCount", "UsOfdmaCount",
+                  "DsOfdmLockedCount", "DsOfdmCount", "DsLockedCount", "DsChannelCount")
+
+
+def _aggregate_observations(rows: List[Dict[str, str]]) -> List[Observation]:
+    """Channel counts from the 30 s full reads in modem-signals.csv. Coarse,
+    but the only channel record before per-channel rows existed."""
+    out = []
+    for r in rows:
+        if r.get("ReadOK") != "1" or r.get("Reason") not in FRESH_AGGREGATE_REASONS:
+            continue
+        key = tuple(r.get(k, "") for k in AGGREGATE_KEYS)
+        text = (f"SC {key[0]}/{key[1]} OPERATE | OFDMA {key[2]}/{key[3]} OPERATE | OFDM {key[4]}/{key[5]} locked"
+                f" | DS {key[6]}/{key[7]} locked（30 秒讀取）")
+        out.append(Observation(r["_t"], "aggregate", key, text))
+    return out
+
+
+def modem_observations(root: Path, t0: dt.datetime, t1: dt.datetime) -> List[Observation]:
+    obs = (_channel_observations(read_rows(root, "modem-channels.csv", t0, t1))
+           + _fast_observations(read_rows(root, "fast-poll.csv", t0, t1))
+           + _aggregate_observations(read_rows(root, "modem-signals.csv", t0, t1)))
+    return sorted(obs, key=lambda o: o.t)
+
+
 def transitions(obs: List[Observation]) -> List[Tuple[Observation, Observation]]:
     """Consecutive observations of the same kind whose state differs.
 
@@ -188,7 +216,11 @@ def transitions(obs: List[Observation]) -> List[Tuple[Observation, Observation]]
     chan = pairs("us_scqam") + pairs("us_ofdma")
     fast = [p for p in pairs("fast")
             if not any(abs((p[1].t - c[1].t).total_seconds()) <= 2 for c in chan)]
-    return sorted(chan + fast, key=lambda p: p[1].t)
+    finer = chan + fast
+    # A 30 s aggregate change is kept only when nothing finer saw it.
+    agg = [p for p in pairs("aggregate")
+           if not any(p[0].t - dt.timedelta(seconds=2) <= c[1].t <= p[1].t + dt.timedelta(seconds=2) for c in finer)]
+    return sorted(finer + agg, key=lambda p: p[1].t)
 
 
 def coverage(obs: List[Observation], start: dt.datetime, end: dt.datetime) -> Tuple[bool, float, int]:
@@ -200,6 +232,8 @@ def coverage(obs: List[Observation], start: dt.datetime, end: dt.datetime) -> Tu
     ticks carry the downstream OFDM lock, so a tick whose reads did not all
     complete leaves downstream unobserved even when the upstream rows exist.
     """
+    # The 30 s aggregates are too coarse to count towards coverage.
+    obs = [o for o in obs if o.source != "aggregate"]
     ticks = [o for o in obs if o.source == "fast"]
     up_ok, up_gap, inside = _covered(obs, start, end)
     if not ticks:
@@ -339,9 +373,7 @@ def classify(root: Path, event: Dict[str, str]) -> Classified:
     t0, t1 = start - dt.timedelta(seconds=TIMELINE_SEC), end + dt.timedelta(seconds=TIMELINE_SEC)
 
     samples = incident_samples(root, event)
-    obs = (_channel_observations(read_rows(root, "modem-channels.csv", t0, t1))
-           + _fast_observations(read_rows(root, "fast-poll.csv", t0, t1)))
-    obs.sort(key=lambda o: o.t)
+    obs = modem_observations(root, t0, t1)
     skew = skew_near(root, start)
     entries = log_entries(root, w0, w1, skew or 0)
     strong = [e for e in entries if e.kind == "strong"]

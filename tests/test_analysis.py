@@ -204,3 +204,28 @@ class Reports(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UcidReport(unittest.TestCase):
+    def test_chain_t4_status_removal_restore_and_outage(self):
+        from cable_outage_evidence import ucid
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            d = Dataset(root)
+            d.skew(2)
+            d.log("82000400", "T4 time out", -5)
+            d.log("74010100", "CM-STATUS message sent. Event Type Code: 6; Chan ID: 7; ", -1)
+            d.log("74010100", "CM-STATUS message sent. Event Type Code: 16; Chan ID: 7; ", 40)
+            d.channels(START - dt.timedelta(seconds=4), reason="PrevObserved")
+            d.channels(START + dt.timedelta(seconds=1), ("OPERATE", "NOT_READY"), reason="StateChange")
+            d.channels(START + dt.timedelta(seconds=29), ("OPERATE", "NOT_READY"), reason="Fast")
+            d.channels(START + dt.timedelta(seconds=30), reason="Fast")
+            days = (dt.date.today() - START.date()).days + 2
+            text = ucid.report(root, "7", days)
+            self.assertIn("T4 → CM-STATUS：+4 s", text)
+            # Relative to the T4 at -5 s: removal in (+1, +6], restore in (+34, +35].
+            self.assertIn("頻道離開 OPERATE：(+1, +6] s，解析度 5 s；掉的 OFDMA index 1", text)
+            self.assertIn("頻道恢復 OPERATE：(+34, +35] s，解析度 1 s", text)
+            self.assertIn("斷線：開始 +5 s", text)
+            self.assertIn("同一 UCID 的其他 CM-STATUS（1 筆）", text)
+            self.assertIsNone(CAUSE_WORDS.search(text))
