@@ -45,3 +45,14 @@ The first version supports Hitron CODA modems. See [docs/spec.md](docs/spec.md)
 ## License
 
 MIT
+
+## 目前可以試用的部分
+
+```
+py -3 -m cable_outage_evidence discover-path   # 找出預設閘道與 ISP 第一跳
+py -3 -m cable_outage_evidence once            # 取樣一次並印出
+py -3 -m cable_outage_evidence run             # 持續監控，Ctrl+C 停止
+py -3 -m unittest discover -s tests -t .       # 測試
+```
+
+macOS / Linux 用 `python3` 取代 `py -3`。數據機讀取和報告還在開發中。
