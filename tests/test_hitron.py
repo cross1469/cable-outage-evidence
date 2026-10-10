@@ -1,4 +1,5 @@
 import csv
+import json
 import tempfile
 import time
 import unittest
@@ -42,10 +43,11 @@ class Parsing(unittest.TestCase):
     def test_log_entries_split_tags(self):
         entries = hitron.log_entries(load("Log"))
         self.assertEqual(len(entries), 4)
-        t, prio, typ, msg, cmts = entries[2]
+        t, prio, typ, msg, cmts, cm = entries[2]
         self.assertEqual(typ, "74010100")
         self.assertNotIn("CM-MAC", msg)
         self.assertEqual(cmts, "02:00:00:00:00:fe")
+        self.assertEqual(cm, "02:00:00:00:00:01")
         self.assertEqual(evidence.evidence_label(typ, msg), "CM-STATUS type 6 Chan 7")
 
     def test_dedupe_ignores_index_shift(self):
@@ -56,6 +58,9 @@ class Parsing(unittest.TestCase):
             for i, e in enumerate(log["Log_List"]):
                 e["index"] = i + 10
             self.assertEqual(dd.new(hitron.log_entries(log)), [])
+            # Keys written before CmMac existed (five fields) still match.
+            old_keys = [json.dumps(list(e[:5])) for e in hitron.log_entries(log)]
+            (Path(d) / "seen").write_text("\n".join(old_keys) + "\n", encoding="utf-8")
             # A fresh process reads the same seen file.
             self.assertEqual(hitron.LogDeduper(Path(d) / "seen").new(hitron.log_entries(log)), [])
 

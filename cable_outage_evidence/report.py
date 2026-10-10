@@ -40,8 +40,8 @@ MODEM_DEFAULTS = {"192.168.0.1", "192.168.100.1"}
 
 
 class Redactor:
-    """Masks the user's own identifiers. ISP-side identifiers (the first hop,
-    the CMTS MAC, the modem's CM gateway) stay: the ISP needs them."""
+    """Masks home-network addresses only. What the ISP already knows or needs
+    stays: the modem's MAC, the CMTS MAC, the first hop, the CM gateway."""
 
     def __init__(self, enabled: bool):
         self.enabled = enabled
@@ -61,10 +61,7 @@ class Redactor:
                 # Home networks; ISP access networks often use 10/8 or 100.64/10.
                 return "<home-network>"
             return m.group(0)
-        text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", ip, text)
-        # Any MAC except one labelled as the CMTS's.
-        return re.sub(r"(?<!CMTS )(?<!CMTS-MAC=)\b(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b",
-                      lambda m: "<mac>", text)
+        return re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", ip, text)
 
 
 def _coverage(root: Path, first: dt.date, last: dt.date) -> (int, int):
@@ -90,12 +87,17 @@ def _modem_gaps(root: Path, first: dt.date, last: dt.date) -> List[str]:
     return out
 
 
-def _ensure_class(root: Path, event, classes) -> Dict[str, str]:
-    c = classes.get(event["StartTime"])
-    if c is None:
-        cl = analysis.classify_and_save(root, event)
-        c = dict(zip(analysis.CLASS_HEADER, analysis.class_row(cl)))
-    return c
+def _identifiers(entries) -> List[str]:
+    """The modem and CMTS MACs the modem itself reported, most common first.
+    The ISP finds the subscriber by the first and the node by the second."""
+    cm = collections.Counter(e.cm_mac for e in entries if e.cm_mac)
+    cmts = collections.Counter(e.cmts_mac for e in entries if e.cmts_mac)
+    out = []
+    if cm:
+        out.append("數據機 MAC（數據機日誌回報）：" + "，".join(m for m, _ in cm.most_common()))
+    if cmts:
+        out.append("CMTS MAC（數據機日誌回報）：" + "，".join(m for m, _ in cmts.most_common()))
+    return out
 
 
 def summary(root: Path, days: int = 30, redact: bool = True) -> str:
@@ -103,22 +105,30 @@ def summary(root: Path, days: int = 30, redact: bool = True) -> str:
     last = dt.date.today()
     first = last - dt.timedelta(days=days - 1)
     events = analysis.all_events(root, first, last)
-    classes = analysis.load_classes(root)
     seen, total = _coverage(root, first, last)
+    period_log = analysis.log_entries(root, dt.datetime.combine(first, dt.time.min),
+                                      dt.datetime.combine(last, dt.time.max), 0)
+    main_cmts = collections.Counter(e.cmts_mac for e in period_log if e.cmts_mac).most_common(1)
+    main_cmts = main_cmts[0][0] if main_cmts else ""
     out = [f"Cable 斷線紀錄報告  {first} ~ {last}（{days} 天）", "=" * 40, ""]
     out.append(f"監控涵蓋：{seen} 分鐘 / {total} 分鐘（{100 * seen / total:.1f}%）。"
                "電腦睡眠、關機或程式未執行的時間沒有資料，不代表沒有斷線。")
     out.append("方法：每 0.5 秒同時探測家用路由器、數據機、ISP 第一跳與三個公共目標（1.1.1.1、8.8.8.8、"
                "101.101.101.101）；三個公共目標中至少兩個失敗才算斷線。斷線時另測 TCP 443，並每秒讀取數據機"
                "的上下行頻道狀態，定期複製數據機的 DOCSIS 日誌。")
+    ids = _identifiers(period_log)
+    if ids:
+        out += [""] + ids
     out.append("")
     grades = collections.Counter(e["Grade"] for e in events)
     out.append("事件數（依等級）：" + "，".join(f"{g} {grades.get(g, 0)}" for g in ("P1", "P2", "P3", "P4")))
     out.append("  P1 確認中斷（TCP 443 也失敗或網路介面中斷）；P2 可能中斷（數據機整段無回應）；"
                "P3 持續 ICMP 遺失但 TCP 443 仍可連；P4 未達持續門檻（約 2 秒）且 TCP 443 仍可連，只計數。")
     serious = [e for e in events if e["Grade"] in ("P1", "P2", "P3")]
+    # Classified afresh, so the report always follows the current rules.
+    classified = {e["StartTime"]: analysis.classify(root, e) for e in serious}
     if serious:
-        cls = collections.Counter(_ensure_class(root, e, classes)["Class"] for e in serious)
+        cls = collections.Counter(classified[e["StartTime"]].cls for e in serious)
         out.append("P1–P3 依觀察分類：" + "，".join(f"{k} {v}" for k, v in sorted(cls.items())))
         hours = collections.Counter(e["_start"].hour for e in serious)
         out.append("P1–P3 時段分布：" + " ".join(f"{h:02d}時:{hours[h]}" for h in sorted(hours)))
@@ -132,15 +142,15 @@ def summary(root: Path, days: int = 30, redact: bool = True) -> str:
     if not serious:
         out.append("（無）")
     for e in serious:
-        c = _ensure_class(root, e, classes)
-        out.append(f"{e['StartTime'][:19]}  {e['DurationSeconds']} s  {e['Grade']}  "
+        cl = classified[e["StartTime"]]
+        out.append(f"{e['StartTime'][:19]}  {float(e['DurationSeconds'] or 0):.1f} 秒  {e['Grade']}  "
                    f"最先失敗：{LAYER_ZH.get(e.get('FirstFailingLayer', ''), e.get('FirstFailingLayer', ''))}  "
-                   f"分類 {c['Class']}（{CLASS_ZH.get(c['Class'], '')}）")
-        out.append(f"    觀察：{c['ClassReason']}")
-        cl = analysis.classify(root, e)
-        for entry in cl.strong + cl.weak + cl.other_log:
+                   f"分類 {cl.cls}（{CLASS_ZH.get(cl.cls, '')}）")
+        for reason in cl.reasons:
+            out.append(f"    - {reason}")
+        for entry in sorted(cl.strong + cl.weak + cl.other_log, key=lambda x: x.t):
             out.append(f"    日誌 {entry.modem_time}（數據機時間）{entry.event_type} {entry.message}"
-                       + (f"  CMTS {entry.cmts_mac}" if entry.cmts_mac else ""))
+                       + (f"  CMTS {entry.cmts_mac}" if entry.cmts_mac and entry.cmts_mac != main_cmts else ""))
     out += ["", f"P4（未達持續門檻）：{grades.get('P4', 0)} 次，未逐筆列出。", "", BACKGROUND, ""]
     return r("\n".join(out))
 
@@ -155,6 +165,8 @@ def evidence(root: Path, match: str = "", redact: bool = True) -> str:
     out = [f"事件證據 {e['StartTime'][:19]} ~ {e['EndTime'][:19]}（{e['DurationSeconds']} s）", "=" * 40]
     out.append(f"等級 {e['Grade']}，取樣分類 {e['Classification']}，最先失敗："
                f"{LAYER_ZH.get(e.get('FirstFailingLayer', ''), '')}")
+    near = analysis.log_entries(root, start - dt.timedelta(days=1), end + dt.timedelta(days=1), c.skew or 0)
+    out += _identifiers(near)
     out.append(f"探測目標：家用路由器 {e.get('LanGatewayAddress') or '-'}，數據機 {e.get('ModemAddress') or '-'}，"
                f"ISP 第一跳 {e.get('FirstHopAddress') or '未知'}")
     out.append(f"觀察分類 {c.cls}（{CLASS_ZH.get(c.cls, '')}）")

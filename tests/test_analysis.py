@@ -55,7 +55,8 @@ class Dataset:
         mt = START + dt.timedelta(seconds=offset_sec - skew)
         self.store.append_csv("docsis-log.csv", hitron.LOG_HEADER,
                               [[ts(START + dt.timedelta(minutes=5)), mt.strftime(analysis.MODEM_LOG_FORMAT), "3",
-                                event_type, message, "02:00:00:00:00:fe"]], path=self.day / "docsis-log.csv")
+                                event_type, message, "02:00:00:00:00:fe", "02:00:00:00:00:01"]],
+                              path=self.day / "docsis-log.csv")
 
     def channels(self, t, ofdma_states=("OPERATE", "OPERATE"), reason="Fast"):
         rows = [[ts(t), reason, "us_scqam", str(i), str(i + 1), "OPERATE", "34600000", "6400kHz", "64QAM",
@@ -139,7 +140,7 @@ class Classes(unittest.TestCase):
         d.channels(START + dt.timedelta(seconds=10), reason="Periodic")
         c = self.classify(d)
         self.assertEqual(c.cls, "B-unverified")
-        self.assertTrue(any("observed 0 times" in r for r in c.reasons))
+        self.assertTrue(any("觀察頻道狀態 0 次" in r for r in c.reasons))
 
     def test_local_stall_with_t4_keeps_both_flags(self):
         d = Dataset(self.root, modem_rtt=283.0); d.skew()
@@ -147,14 +148,14 @@ class Classes(unittest.TestCase):
         c = self.classify(d)
         self.assertEqual(c.cls, "L")
         self.assertTrue(c.flags["LocalStall"] and c.flags["StrongControlPlane"])
-        self.assertTrue(any("modem probe 283 ms" in r for r in c.reasons))
+        self.assertTrue(any("數據機探測 283 ms" in r for r in c.reasons))
         self.assertTrue(any(r.startswith("T4") for r in c.reasons))
 
     def test_no_skew_is_stated(self):
         d = Dataset(self.root)
         c = self.classify(d)
         self.assertIsNone(c.skew)
-        self.assertTrue(any("no clock skew" in r for r in c.reasons))
+        self.assertTrue(any("沒有時差紀錄" in r for r in c.reasons))
 
     def test_reclassify_replaces_row_and_writes_timeline(self):
         d = Dataset(self.root); d.skew()
@@ -163,7 +164,7 @@ class Classes(unittest.TestCase):
         rows = (d.day / "event-classes.csv").read_text(encoding="utf-8").strip().splitlines()
         self.assertEqual(len(rows), 2)
         text = c.timeline_path.read_text(encoding="utf-8")
-        self.assertIn("EVENT  outage start", text)
+        self.assertIn("EVENT  斷線開始", text)
         self.assertIn("PROBE", text)
         self.assertIsNone(CAUSE_WORDS.search(text))
 
@@ -189,12 +190,16 @@ class Reports(unittest.TestCase):
             self.assertNotIn("192.168.1.1", ev)
             self.assertIn("192.168.1.1", report.evidence(root, redact=False))
             self.assertIn("T4", report.docsis_log(root, days + 1))
+            # The ISP identifies the subscriber by the modem MAC; it is not masked.
+            self.assertIn("數據機 MAC（數據機日誌回報）：02:00:00:00:00:01", text)
+            self.assertIn("CMTS MAC（數據機日誌回報）：02:00:00:00:00:fe", text)
+            self.assertIn("02:00:00:00:00:01", ev)
 
     def test_redactor(self):
         r = report.Redactor(True)
         self.assertEqual(r("home 192.168.8.1 modem 192.168.100.1 isp 10.27.0.1 dns 1.1.1.1"),
                          "home <home-network> modem 192.168.100.1 isp 10.27.0.1 dns 1.1.1.1")
-        self.assertEqual(r("CMTS 02:00:00:00:00:fe cm 02:00:00:00:00:01"), "CMTS 02:00:00:00:00:fe cm <mac>")
+        self.assertEqual(r("CMTS 02:00:00:00:00:fe cm 02:00:00:00:00:01"), "CMTS 02:00:00:00:00:fe cm 02:00:00:00:00:01")
 
 
 if __name__ == "__main__":

@@ -253,6 +253,7 @@ class LogEntry:
     cmts_mac: str
     kind: str
     label: str
+    cm_mac: str = ""
 
 
 def log_entries(root: Path, t0: dt.datetime, t1: dt.datetime, skew: int) -> List[LogEntry]:
@@ -270,9 +271,9 @@ def log_entries(root: Path, t0: dt.datetime, t1: dt.datetime, skew: int) -> List
         key = (r["LogTime"], r["EventType"], r["Message"])
         if t0 <= t <= t1 and key not in seen:
             seen.add(key)
-            out.append(LogEntry(r["LogTime"], t, r["EventType"], r["Message"], r["CmtsMac"],
+            out.append(LogEntry(r["LogTime"], t, r["EventType"], r["Message"], r.get("CmtsMac", ""),
                                 evidence.evidence_kind(r["EventType"], r["Message"]),
-                                evidence.evidence_label(r["EventType"], r["Message"])))
+                                evidence.evidence_label(r["EventType"], r["Message"]), r.get("CmMac") or ""))
     return sorted(out, key=lambda e: e.t)
 
 
@@ -308,16 +309,17 @@ def _local_stall(samples: List[Dict[str, str]], start: dt.datetime, end: dt.date
     for s in samples:
         if not start <= s["_t"] < end:
             continue
-        for layer, label in (("LanGateway", "home router"), ("Modem", "modem")):
+        at = s["_t"].strftime("%H:%M:%S.%f")[:-3]
+        for layer, label in (("LanGateway", "家用路由器"), ("Modem", "數據機")):
             if s.get(f"{layer}OK") == "0":
-                found.append(f"{label} probe failed at {s['_t'].strftime('%H:%M:%S.%f')[:-3]}")
+                found.append(f"{at} {label}探測失敗")
             else:
                 try:
                     rtt = float(s.get(f"{layer}RTT") or "")
                 except ValueError:
                     continue
                 if rtt > LOCAL_STALL_MS:
-                    found.append(f"{label} probe {rtt:.0f} ms at {s['_t'].strftime('%H:%M:%S.%f')[:-3]}")
+                    found.append(f"{at} {label}探測 {rtt:.0f} ms（超過 {LOCAL_STALL_MS} ms）")
     return found
 
 
@@ -358,17 +360,17 @@ def classify(root: Path, event: Dict[str, str]) -> Classified:
         "ChannelStateVerified": verified and not strong and not weak and not changes,
     }
     reasons = []
-    reasons += stall[:3] + ([f"{len(stall) - 3} more local probe failures"] if len(stall) > 3 else [])
-    reasons += [f"{e.label} {e.modem_time} (modem clock)" for e in strong]
-    reasons += [f"channel state {a.text} -> {b.text} between {a.t:%H:%M:%S} and {b.t:%H:%M:%S}"
+    reasons += stall[:3] + ([f"另有 {len(stall) - 3} 次本地探測異常"] if len(stall) > 3 else [])
+    reasons += [f"{e.label}（數據機時間 {e.modem_time}）" for e in strong]
+    reasons += [f"頻道狀態 {a.text} → {b.text}（{a.t:%H:%M:%S} 到 {b.t:%H:%M:%S} 之間）"
                 for a, b in changes]
-    reasons += [f"{e.label} {e.modem_time} (modem clock, weaker association)" for e in weak]
+    reasons += [f"{e.label}（數據機時間 {e.modem_time}，較弱的關聯）" for e in weak]
     if not (strong or weak or changes):
-        reasons.append("no DOCSIS log entry and no channel transition within 60 s")
-        reasons.append(f"channel state observed {inside} times during the outage"
-                       + (f", max gap {max_gap:.1f} s" if max_gap != float("inf") else ", not observed around it"))
+        reasons.append("前後 60 秒內沒有 DOCSIS 日誌，也沒有頻道狀態變化")
+        reasons.append(f"斷線期間觀察頻道狀態 {inside} 次"
+                       + (f"，最大間隔 {max_gap:.1f} 秒" if max_gap != float("inf") else "，斷線前後沒有觀察可對照"))
     if skew is None:
-        reasons.append("no clock skew recorded nearby; modem times used as is")
+        reasons.append("附近沒有時差紀錄，數據機時間未換算")
     c = Classified(event, decide(flags), reasons, flags, strong, weak, other, changes, verified,
                    max_gap, inside, skew, samples, obs)
     return c
@@ -378,7 +380,7 @@ def class_row(c: Classified) -> List[str]:
     e = c.event
     yn = lambda v: "yes" if v else "no"
     return [e["StartTime"], e["EndTime"], e["DurationSeconds"], e["Grade"], e["Classification"], c.cls,
-            " / ".join(c.reasons), yn(c.flags["LocalStall"]), yn(c.flags["StrongControlPlane"]),
+            "；".join(c.reasons), yn(c.flags["LocalStall"]), yn(c.flags["StrongControlPlane"]),
             yn(c.flags["ChannelTransition"]), yn(c.flags["WeakControlPlane"]), yn(c.flags["ChannelStateVerified"]),
             str(c.inside), "" if c.max_gap == float("inf") else f"{c.max_gap:.1f}",
             "" if c.skew is None else str(c.skew), e.get("FirstFailingLayer", ""),
@@ -396,9 +398,9 @@ def timeline_text(root: Path, c: Classified) -> str:
         if t0 <= t <= t1:
             lines.append((t, order, source, text))
 
-    add(start, 0, "EVENT", f"outage start ({c.event['Classification']}, first failing layer "
-                           f"{c.event.get('FirstFailingLayer', '')})")
-    add(end, 0, "EVENT", f"recovered after {c.event['DurationSeconds']} s (grade {c.event['Grade']})")
+    add(start, 0, "EVENT", f"斷線開始（{c.event['Classification']}，最先失敗 "
+                           f"{c.event.get('FirstFailingLayer', '')}）")
+    add(end, 0, "EVENT", f"恢復，歷時 {c.event['DurationSeconds']} 秒（等級 {c.event['Grade']}）")
     targets = None
     for s in c.samples:
         if targets is None:
@@ -420,20 +422,20 @@ def timeline_text(root: Path, c: Classified) -> str:
             last[o.source] = (o.text, o.t)
     skew = c.skew or 0
     for e in log_entries(root, t0, t1, skew):
-        add(e.t, 1, "LOG", f"{e.label} [{e.kind}] modem {e.modem_time}: {e.message}")
+        add(e.t, 1, "LOG", f"{e.label} [{e.kind}] 數據機時間 {e.modem_time}：{e.message}")
     for rec in read_jsonl(root, "events-journal.jsonl", t0.date(), t1.date()):
         if rec.get("type") == "modem_status":
             t = parse_ts(rec.get("time", ""))
             if t:
-                add(t, 1, "MODEM", f"reading status {rec.get('previous')} -> {rec.get('status')}")
+                add(t, 1, "MODEM", f"數據機讀取狀態 {rec.get('previous')} → {rec.get('status')}")
 
     head = [
-        f"Event {fmt(start)} - {fmt(end)} ({c.event['DurationSeconds']} s), grade {c.event['Grade']}, "
+        f"事件 {fmt(start)} ~ {fmt(end)}（{c.event['DurationSeconds']} 秒），等級 {c.event['Grade']}，"
         f"{c.event['Classification']}",
-        f"Class {c.cls}: " + "; ".join(c.reasons),
-        "Flags: " + ", ".join(f"{k}={'yes' if v else 'no'}" for k, v in c.flags.items()),
-        f"Clock skew used: {c.skew if c.skew is not None else 'none recorded (0)'} s (computer - modem)",
-        "Offsets are seconds from the outage start. Labels are observations, not causes.",
+        f"分類 {c.cls}：" + "；".join(c.reasons),
+        "旗標：" + "，".join(f"{k}={'yes' if v else 'no'}" for k, v in c.flags.items()),
+        f"時差（電腦 - 數據機）：{c.skew if c.skew is not None else '無紀錄，以 0 計'} 秒",
+        "第一欄是相對斷線開始的秒數。分類只描述觀察，不代表原因。",
         "",
     ]
     body = []

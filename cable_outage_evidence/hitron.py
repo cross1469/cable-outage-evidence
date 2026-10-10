@@ -218,22 +218,24 @@ def failure_row(ts: str, reason: str, error: str) -> List[str]:
     return [ts, reason, "0", error] + [""] * (len(SUMMARY_HEADER) - 4)
 
 
-LOG_HEADER = ["RecordedAt", "LogTime", "Priority", "EventType", "Message", "CmtsMac"]
+LOG_HEADER = ["RecordedAt", "LogTime", "Priority", "EventType", "Message", "CmtsMac", "CmMac"]
 
 
-def log_entries(resp: Optional[Dict]) -> List[Tuple[str, str, str, str, str]]:
-    """(LogTime, Priority, EventType, Message, CmtsMac) per entry. The
-    trailing ;CM-MAC=..;CMTS-MAC=..;CM-QOS=..;CM-VER=.. tags are split off; only
-    the CMTS MAC is kept, because it names the device a report is about."""
+def _tag(event: str, name: str) -> str:
+    return event.split(name + "=", 1)[1].split(";", 1)[0] if name + "=" in event else ""
+
+
+def log_entries(resp: Optional[Dict]) -> List[Tuple[str, str, str, str, str, str]]:
+    """(LogTime, Priority, EventType, Message, CmtsMac, CmMac) per entry. The
+    trailing ;CM-MAC=..;CMTS-MAC=..;CM-QOS=..;CM-VER=.. tags are split off the
+    message. Both MACs are kept: the ISP finds the subscriber by the modem's
+    MAC and the node by the CMTS's."""
     out = []
     for e in (resp or {}).get("Log_List") or []:
         event = str(e.get("event") or "")
         message = event.split(";CM-MAC=")[0]
-        cmts = ""
-        if "CMTS-MAC=" in event:
-            cmts = event.split("CMTS-MAC=", 1)[1].split(";", 1)[0]
         out.append((str(e.get("time") or ""), str(e.get("priority") or ""), str(e.get("type") or ""),
-                    message, cmts))
+                    message, _tag(event, "CMTS-MAC"), _tag(event, ";CM-MAC")))
     return out
 
 
@@ -256,7 +258,8 @@ class LogDeduper:
     def new(self, entries) -> List[Tuple]:
         fresh = []
         for e in entries:
-            key = json.dumps(list(e), ensure_ascii=False)
+            # The first five fields only, so keys written before CmMac existed still match.
+            key = json.dumps(list(e[:5]), ensure_ascii=False)
             if key not in self._set:
                 self._set.add(key)
                 self.seen.append(key)

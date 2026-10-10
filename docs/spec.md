@@ -220,7 +220,7 @@ cable 線路上跑了約兩個月，記錄到多次 7–10 秒的瞬斷。本文
 | `Log` | `Log_List` | `time`（數據機時鐘，MM/DD/YYYY）、`priority`、`type`、`event` |
 
 `Log` 的 `event` 結尾帶有 `;CM-MAC=..;CMTS-MAC=..;CM-QOS=..;CM-VER=..`。訊息只取
-`;CM-MAC=` 之前的部分；`CMTS-MAC` 另存一欄，因為它指出報告要談的 ISP 設備。
+`;CM-MAC=` 之前的部分；`CMTS-MAC` 和 `CM-MAC` 各存一欄：ISP 用前者找節點、用後者找用戶。
 
 ### 8.2 只有一個連線
 
@@ -303,7 +303,7 @@ cable 線路上跑了約兩個月，記錄到多次 7–10 秒的瞬斷。本文
 | `modem-signals.csv` | 數據機彙總：頻道數、鎖定數、功率與 SNR 範圍、OFDMA 寬度與 `repPower1_6` |
 | `modem-channels.csv` | 每次讀取每個頻道一列，長格式，含原因（`Periodic`、`PrevObserved`、`StateChange`、`Fast` 等） |
 | `fast-poll.csv` | 快速模式每秒一列：遲到時間、讀取耗時、頻道計數、時差 |
-| `docsis-log.csv` | 從數據機複製出的日誌：記錄時間、數據機時間、等級、type、訊息、CMTS MAC |
+| `docsis-log.csv` | 從數據機複製出的日誌：記錄時間、數據機時間、等級、type、訊息、CMTS MAC、數據機 MAC |
 | `event-classes.csv`、`timelines/` | 觀察型分類與時間軸 |
 | `sessions.jsonl` | 程式啟動與停止的紀錄，用來看出電腦睡眠或關機的空白 |
 
@@ -327,14 +327,16 @@ cable 線路上跑了約兩個月，記錄到多次 7–10 秒的瞬斷。本文
 
 ### 遮蔽
 
-產生報告時預設遮蔽：
+只遮蔽**家裡設備**的資訊：家用網路的私有位址（`192.168.x.x`、`172.16–31.x.x`）改成
+`<home-network>`。
 
-- 公網 IP：保留前兩段，例如 `203.0.x.x`；
-- 數據機自己的 MAC（`CM-MAC`）、序號；
-- 電腦和家用路由器的位址。
+不遮蔽、而且要列出的：
 
-CMTS MAC 和 ISP 第一跳的位址不遮蔽，因為它們指出 ISP 自己的設備，ISP 需要它們來
-查問題。加 `--no-redact` 可以輸出完整資料。
+- 數據機自己的 MAC（從日誌的 `CM-MAC` 取得）：ISP 本來就知道，而且要用它找到用戶；
+- CMTS MAC、ISP 第一跳、數據機回報的 CM 閘道：都是 ISP 自己的設備；
+- 數據機的管理位址（`192.168.0.1`、`192.168.100.1`）：每台同型數據機都一樣。
+
+報告不會出現公網 IP：程式沒有收集它。加 `--no-redact` 可以輸出完整資料。
 
 ## 11. 不移植的功能
 
