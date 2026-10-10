@@ -62,7 +62,7 @@ macOS / Linux 用 `python3` 取代 `py -3`。
 
 ## English
 
-> **v0.1.1.** Monitoring, modem reading, event classes and reports work; tested on Windows only so far.
+> **v0.1.1.** Monitoring, modem reading, event classes and reports work. Tested on real hardware on Windows; macOS and Linux pass automated tests and need real-world reports.
 
 Short cable (DOCSIS) dropouts of a few seconds often never show up in ISP
 monitoring: the modem stays registered and the ISP's periodic checks see nothing.
