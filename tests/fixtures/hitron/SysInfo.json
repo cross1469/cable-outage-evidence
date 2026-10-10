@@ -1,0 +1,16 @@
+{
+ "errCode": "000",
+ "errMsg": "",
+ "ntAccess": "Permitted",
+ "ip": [
+  "192.0.2.10"
+ ],
+ "subMask": "255.255.255.0",
+ "gw": "192.0.2.1",
+ "lease": "D: 1 H: 00 M: 00 S: 00",
+ "Configname": "example.cm",
+ "DsDataRate": "0",
+ "UsDataRate": "0",
+ "tunefreq": 579,
+ "UStuneID": "2"
+}

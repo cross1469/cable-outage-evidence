@@ -6,7 +6,7 @@ import signal
 import sys
 from pathlib import Path
 
-from . import __version__, config, monitor, platform_net, storage
+from . import __version__, config, hitron, monitor, platform_net, storage
 
 
 def cmd_run(cfg, args):
@@ -41,11 +41,44 @@ def cmd_discover_path(cfg, args):
 
 
 def cmd_init(cfg, args):
+    import getpass
     path = Path(args.config) if args.config else config.default_config_path()
     if path.exists() and not args.force:
         print(f"{path} already exists (use --force to overwrite)")
         return 1
+    if sys.stdin.isatty():
+        url = input(f"modem address [{cfg.modem_url}] (none to skip modem reading): ").strip()
+        if url.lower() == "none":
+            cfg.modem_type = "none"
+        else:
+            cfg.modem_url = url or cfg.modem_url
+            cfg.modem_username = input(f"modem username [{cfg.modem_username or 'admin'}]: ").strip() or cfg.modem_username or "admin"
+            cfg.modem_password = getpass.getpass("modem password (not shown): ")
     print(f"wrote {config.save(cfg, path)}")
+
+
+def cmd_modem_check(cfg, args):
+    """Logs in once and prints what the modem reports; never prints credentials."""
+    if cfg.modem_type == "none" or not cfg.modem_username:
+        print("modem reading is off (run init)")
+        return 1
+    client = hitron.HitronClient(cfg.modem_url, cfg.modem_username, cfg.modem_password)
+    try:
+        client.login()
+        data = {ep: client.get(ep)[0] for ep in ("SysInfo", "UsInfo", "UsOfdm", "DsInfo", "DsOfdm")}
+        c = hitron.counts(data["UsInfo"], data["UsOfdm"], data["DsInfo"], data["DsOfdm"])
+        print(f"network access: {hitron.clean(data['SysInfo'].get('ntAccess'))}")
+        print(f"upstream SC-QAM {c['UsScQamOperate']}/{c['UsScQamCount']} OPERATE, "
+              f"OFDMA {c['UsOfdmaOperate']}/{c['UsOfdmaCount']} OPERATE")
+        print(f"downstream SC-QAM {c['DsScQamLocked']}/{c['DsScQamCount']} locked, "
+              f"OFDM {c['DsOfdmLocked']}/{c['DsOfdmCount']} locked")
+        entries = hitron.log_entries(client.get("Log")[0])
+        print(f"event log: {len(entries)} entries")
+    except hitron.ModemError as e:
+        print(f"modem check failed: {e}")
+        return 1
+    finally:
+        client.logout()
 
 
 def cmd_paths(cfg, args):
@@ -57,6 +90,7 @@ COMMANDS = {
     "run": (cmd_run, "monitor until stopped (Ctrl+C)"),
     "once": (cmd_once, "take one sample and print it"),
     "discover-path": (cmd_discover_path, "show the default gateway and ISP first hop"),
+    "modem-check": (cmd_modem_check, "log in to the modem once and show its channel state"),
     "init": (cmd_init, "write a config file with every default"),
     "paths": (cmd_paths, "print the config and data locations"),
 }

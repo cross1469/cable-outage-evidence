@@ -1,0 +1,33 @@
+{
+ "errCode": "000",
+ "errMsg": "",
+ "Freq_List": [
+  {
+   "portId": "1",
+   "lockStatus": "OPERATE",
+   "frequency": "34600000",
+   "modulationType": "64QAM",
+   "signalStrength": "40.020",
+   "bandwidth": "6400 kHz",
+   "channelId": "2"
+  },
+  {
+   "portId": "2",
+   "lockStatus": "OPERATE",
+   "frequency": "28200000",
+   "modulationType": "64QAM",
+   "signalStrength": "40.020",
+   "bandwidth": "6400 kHz",
+   "channelId": "3"
+  },
+  {
+   "portId": "3",
+   "lockStatus": "OPERATE",
+   "frequency": "41000000",
+   "modulationType": "64QAM",
+   "signalStrength": "40.520",
+   "bandwidth": "6400 kHz",
+   "channelId": "1"
+  }
+ ]
+}

@@ -1,0 +1,26 @@
+{
+ "errCode": "000",
+ "errMsg": "",
+ "Freq_List": [
+  {
+   "uschindex": 0,
+   "state": "   OPERATE",
+   "digAtten": "    0.1615",
+   "digAttenBo": "    4.2500",
+   "channelBw": "   70.8000",
+   "repPower": "   52.9591",
+   "repPower1_6": "   36.5000",
+   "fftVal": "        2K"
+  },
+  {
+   "uschindex": 1,
+   "state": "      RNG3",
+   "digAtten": "    0.1252",
+   "digAttenBo": "   12.2224",
+   "channelBw": "   18.8000",
+   "repPower": "   45.9504",
+   "repPower1_6": "   35.2500",
+   "fftVal": "        2K"
+  }
+ ]
+}

@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Dict, Optional
 
-from . import classify, config, events, platform_net, storage
+from . import classify, config, events, modem_worker, platform_net, storage
 
 log = logging.getLogger("cable-outage-evidence")
 
@@ -112,8 +112,11 @@ class Monitor:
         self.awaiting_tcp = set()
         self.sequence = 0
         self._stop = threading.Event()
-        self.on_event_start = None      # hook for the modem module's fast mode
+        self.on_event_start = None
         self.on_event_recovered = None
+        self.modem: Optional[modem_worker.ModemWorker] = None
+        if cfg.modem_type == "hitron-coda" and cfg.modem_url and cfg.modem_username:
+            self.modem = modem_worker.ModemWorker(cfg, self.store)
 
     # --- probing -------------------------------------------------------------
 
@@ -194,6 +197,9 @@ class Monitor:
             self.store.append_jsonl("events-journal.jsonl", {
                 "type": "start", "time": ev.start.timestamp, "classification": ev.start.classification,
                 "first_failing_layer": ev.first_failing_layer})
+            # Fast mode first, before the TCP checks: the first seconds matter most.
+            if self.modem:
+                self.modem.request_fast(self.cfg.modem_fast_min_sec, "IncidentStart")
             threading.Thread(target=self._tcp_checks, args=(ev,), daemon=True).start()
             if self.on_event_start:
                 self.on_event_start(ev)
@@ -206,6 +212,8 @@ class Monitor:
             else:
                 # The TCP/443 checks can outlast a short outage; the row waits for them.
                 self.awaiting_tcp.add(id(ev))
+            if self.modem:
+                self.modem.request_fast(self.cfg.modem_fast_post_sec, "Recovery")
             if self.on_event_recovered:
                 self.on_event_recovered(ev)
         if up.closed:
@@ -226,6 +234,11 @@ class Monitor:
 
     def run(self):
         self.path.start()
+        if self.modem:
+            self.modem.request_snapshot("Startup")
+            self.modem.start()
+        elif self.cfg.modem_type != "none":
+            log.info("modem reading is off: set modem_username and modem_password (run init)")
         self.store.append_jsonl("sessions.jsonl", {"type": "start", "time": storage.now_text(),
                                                    "ping_method": self.pinger.method})
         log.info("monitoring every %d ms; ping via %s; data in %s",
@@ -270,6 +283,8 @@ class Monitor:
                 self.store.append_csv("minute-summary.csv", self.minutes.header(), [self.minutes.row()])
         finally:
             self.path.stop()
+            if self.modem:
+                self.modem.stop()
             self.sampler.shutdown(wait=False)
             self.pool.shutdown(wait=False)
             self.store.append_jsonl("sessions.jsonl", {"type": "stop", "time": storage.now_text(),

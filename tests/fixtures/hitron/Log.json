@@ -1,0 +1,34 @@
+{
+ "errCode": "000",
+ "errMsg": "",
+ "Log_List": [
+  {
+   "index": 1,
+   "time": "01/01/2026 08:00:05",
+   "priority": "3",
+   "type": "82000200",
+   "event": "No Ranging Response received - T3 time-out;CM-MAC=02:00:00:00:00:01;CMTS-MAC=02:00:00:00:00:fe;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "index": 2,
+   "time": "01/01/2026 08:00:10",
+   "priority": "3",
+   "type": "82000400",
+   "event": "Received Response to Broadcast Maintenance Request, But no Unicast Maintenance opportunities received - T4 time out;CM-MAC=02:00:00:00:00:01;CMTS-MAC=02:00:00:00:00:fe;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "index": 3,
+   "time": "01/01/2026 08:00:12",
+   "priority": "5",
+   "type": "74010100",
+   "event": "CM-STATUS message sent. Event Type Code: 6; Chan ID: 7;  DSID: N/A; MAC Addr: N/A; OFDM/OFDMA Profile ID: N/A.;CM-MAC=02:00:00:00:00:01;CMTS-MAC=02:00:00:00:00:fe;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "index": 4,
+   "time": "01/01/2026 08:10:00",
+   "priority": "6",
+   "type": "67061601",
+   "event": "US profile assignment change.  US Chan ID: 8; Previous Profile: 5; New Profile: 6.;CM-MAC=02:00:00:00:00:01;CMTS-MAC=02:00:00:00:00:fe;CM-QOS=1.1;CM-VER=3.1;"
+  }
+ ]
+}

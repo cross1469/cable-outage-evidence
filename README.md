@@ -29,6 +29,22 @@ ingress）的特徵。工具量不到 ingress 本身，但能把證據整理好�
 
 詳細規則見 [docs/spec.md](docs/spec.md)。
 
+## 目前可以試用的部分
+
+```
+py -3 -m cable_outage_evidence init            # 建立設定檔（會詢問數據機帳密）
+py -3 -m cable_outage_evidence modem-check     # 確認讀得到數據機
+py -3 -m cable_outage_evidence discover-path   # 找出預設閘道與 ISP 第一跳
+py -3 -m cable_outage_evidence once            # 取樣一次並印出
+py -3 -m cable_outage_evidence run             # 持續監控，Ctrl+C 停止
+py -3 -m unittest discover -s tests -t .       # 測試
+```
+
+macOS / Linux 用 `python3` 取代 `py -3`。
+
+讀取數據機前先執行 `init` 設定數據機位址與帳密（密碼只存在本機的設定檔），
+再用 `modem-check` 確認連得上。事件分類、時間軸和給 ISP 的報告還在開發中。
+
 ## English
 
 > **Work in progress.** Only the specification exists so far.
@@ -45,14 +61,3 @@ The first version supports Hitron CODA modems. See [docs/spec.md](docs/spec.md)
 ## License
 
 MIT
-
-## 目前可以試用的部分
-
-```
-py -3 -m cable_outage_evidence discover-path   # 找出預設閘道與 ISP 第一跳
-py -3 -m cable_outage_evidence once            # 取樣一次並印出
-py -3 -m cable_outage_evidence run             # 持續監控，Ctrl+C 停止
-py -3 -m unittest discover -s tests -t .       # 測試
-```
-
-macOS / Linux 用 `python3` 取代 `py -3`。數據機讀取和報告還在開發中。

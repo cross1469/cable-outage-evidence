@@ -1,0 +1,24 @@
+{
+ "errCode": "000",
+ "errMsg": "",
+ "Freq_List": [
+  {
+   "receive": 0,
+   "ffttype": "NA",
+   "Subcarr0freqFreq": "NA",
+   "plclock": " NO",
+   "ncplock": " NO",
+   "mdc1lock": " NO",
+   "plcpower": "NA"
+  },
+  {
+   "receive": 1,
+   "ffttype": "4K",
+   "Subcarr0freqFreq": " 737600000",
+   "plclock": "YES",
+   "ncplock": "YES",
+   "mdc1lock": "YES",
+   "plcpower": " 10.099998"
+  }
+ ]
+}
