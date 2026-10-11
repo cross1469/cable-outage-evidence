@@ -429,4 +429,7 @@ ping 的例子。
 - CBN 請求序列化，避免並行請求使用過期 token；等候鎖也算入讀取逾時。DOCSIS 四類頻道共用最多 0.5 s 的快取。
 - 上行 `LockStatus = Locked` 映射為 `OPERATE`；OFDMA `STATE = 2` 為 `OPERATE`。保留未鎖定 OFDM / 未運作 OFDMA，不能把消失的狀態隱藏掉。
 - CBN 日誌沒有數值事件碼，只將描述中明確的 T3、T4、CM-STATUS 對應到既有證據規則；其他描述不升級證據強度。
+- CBN `Time` 的實測格式為 `YYYY-MM-DD HH:MM:SS`，在介面層轉成下游共同的 `MM/DD/YYYY HH:MM:SS`；不改變時區或重複套用時差。未知時間仍保留原文，不猜測日期。
+- CM-STATUS 只有描述含精確的 `Event Type Code: 6;` 才是強證據，其他格式維持弱證據。現有 CBN 實機日誌沒有 CM-STATUS，type 6 的端對端測試使用合成字串，尚未確認其他韌體的描述格式。
 - 無效編碼、缺少頻道群組或 session 過期記為讀取失敗，清除登入與快取，讓 worker 下次重新登入。錯誤訊息不回印伺服器原始內容或帳密。
+- 單次連線失敗或逾時只清除 DOCSIS 快取，保留 session 與已收到的 token；若遺失的回應已輪替 token，下次被拒絕後才重新登入。收到 headers 即更新 token，避免讀取 body 逾時後無謂地重新登入。
