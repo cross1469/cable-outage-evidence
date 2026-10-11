@@ -6,6 +6,7 @@ a rotating CSRF header. One DOCSIS response contains all four channel groups.
 
 import base64
 import binascii
+import datetime as dt
 import html
 import http.cookiejar
 import json
@@ -86,6 +87,18 @@ def event_type(message):
     return ""
 
 
+def log_time(value):
+    """Keep downstream CSV/analysis on Hitron's single local-clock format."""
+    text = str(value or "")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S"):
+        try:
+            return dt.datetime.strptime(text, fmt).strftime("%m/%d/%Y %H:%M:%S")
+        except ValueError:
+            pass
+    # Preserve undated/malformed entries for diagnosis; never invent a time.
+    return text
+
+
 class CbnClient:
     def __init__(self, base_url, username, password):
         self.base = base_url.rstrip("/")
@@ -104,10 +117,11 @@ class CbnClient:
             "Referer": self.base + "/common_page/login.php", "CSRF_Token": self._token})
         try:
             with self.opener.open(req, timeout=timeout) as response:
+                # Headers may arrive even if reading the body later times out.
+                self._token = response.headers.get("CSRF_Token", self._token)
                 raw = response.read(4 * 1024 * 1024 + 1)
                 if len(raw) > 4 * 1024 * 1024:
                     raise hitron.ModemResponseError("CBN: response too large")
-                self._token = response.headers.get("CSRF_Token", self._token)
                 return raw, hitron.parse_http_date(response.headers.get("Date"))
         except urllib.error.HTTPError as e:
             if detect:
@@ -190,9 +204,15 @@ class CbnClient:
                 if "DOCSIS_Log" not in data:
                     raise hitron.ModemResponseError("CBN: missing DOCSIS log")
                 entries = rows(data["DOCSIS_Log"])
-                return {"Log_List": [dict(time=c.get("Time"), priority=c.get("Priority"),
+                return {"Log_List": [dict(time=log_time(c.get("Time")), priority=c.get("Priority"),
                     type=event_type(str(c.get("Description") or "")), event=c.get("Description")) for c in entries]}, date
             raise hitron.ModemResponseError("CBN: unknown endpoint")
+        except hitron.ModemUnreachable:
+            # A transport failure alone is not proof that the session expired.
+            # Retry with the last received token. If a lost response rotated it,
+            # the next rejected/invalid reply takes the reauthentication path.
+            self._docsis = None
+            raise
         except hitron.ModemError:
             self.logged_in = False
             self._docsis = None
