@@ -1,10 +1,14 @@
 import concurrent.futures
+import datetime as dt
 import tempfile
 import time
 import unittest
+from pathlib import Path
+from unittest import mock
 
-from cable_outage_evidence import cbn, config, evidence, hitron, modem, modem_worker, setup, storage
+from cable_outage_evidence import analysis, cbn, config, evidence, hitron, modem, modem_worker, report, setup, storage, ucid
 from tests.fake_cbn import FakeCbn
+from tests.test_analysis import Dataset, START, ts
 
 
 class CbnTests(unittest.TestCase):
@@ -69,6 +73,7 @@ class CbnTests(unittest.TestCase):
         self.assertEqual(channels[1]["Modulation"], "2048QAM")
         self.assertEqual(channels[3]["Uncorrectable"], "3")
         entry = hitron.log_entries(client.get("Log")[0])[0]
+        self.assertEqual(entry[0], "10/01/2026 12:00:00")
         self.assertEqual(entry[2], evidence.T4)
         self.assertEqual(evidence.evidence_kind(entry[2], entry[3]), "strong")
         self.assertEqual(entry[4], "00:00:00:00:00:02")
@@ -95,6 +100,103 @@ class CbnTests(unittest.TestCase):
         with self.assertRaises(hitron.ModemResponseError):
             client.get("Log")
         self.assertFalse(client.logged_in)
+
+    def test_body_timeout_keeps_session_and_received_token_for_next_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.cfg.data_dir = tmp
+            worker = modem_worker.ModemWorker(self.cfg, storage.Store(self.cfg.data_path))
+            self.addCleanup(worker.client.logout)
+            self.addCleanup(worker.core.shutdown)
+            self.addCleanup(worker.slow.shutdown)
+            self.fake.body_delay[108] = 0.15
+            with self.assertRaises(hitron.ModemUnreachable):
+                worker._get("UsInfo", timeout=0.05)
+            self.assertTrue(worker.client.logged_in)
+            self.fake.body_delay.clear()
+            worker._get("UsInfo")
+            self.assertEqual(self.fake.logins, 1)
+            self.assertEqual(worker.status, "ok")
+
+    def test_unreceived_token_after_timeout_reauthenticates_only_on_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.cfg.data_dir = tmp
+            worker = modem_worker.ModemWorker(self.cfg, storage.Store(self.cfg.data_path))
+            self.addCleanup(worker.client.logout)
+            self.addCleanup(worker.core.shutdown)
+            self.addCleanup(worker.slow.shutdown)
+            worker._get("Log")
+            with mock.patch.object(worker.client.client, "_read", side_effect=hitron.ModemUnreachable("timeout")):
+                with self.assertRaises(hitron.ModemUnreachable):
+                    worker._get("UsInfo")
+            self.assertTrue(worker.client.logged_in)
+            # Simulate rotation in a response whose headers never reached us.
+            self.fake.token = "unreceived-token"
+            with self.assertRaises(hitron.ModemResponseError):
+                worker._get("UsInfo")
+            self.assertFalse(worker.client.logged_in)
+            worker._get("UsInfo")
+            self.assertEqual(self.fake.logins, 2)
+
+    def test_t4_log_reaches_classification_timeline_and_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset = Dataset(root)
+            dataset.skew(2)
+            # Raw CBN local time is two seconds behind the computer clock.
+            self.fake.logs[0]["Time"] = (START - dt.timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
+            self.cfg.data_dir = tmp
+            worker = modem_worker.ModemWorker(self.cfg, dataset.store)
+            self.addCleanup(worker.client.logout)
+            self.addCleanup(worker.core.shutdown)
+            self.addCleanup(worker.slow.shutdown)
+            with mock.patch.object(storage, "now_text", return_value=ts(START + dt.timedelta(minutes=5))), \
+                    mock.patch.object(dataset.store, "day_dir", return_value=dataset.day):
+                worker._read_log("Validation")
+            event = analysis.find_event(root)
+            classified = analysis.classify(root, event)
+            self.assertEqual(classified.cls, "A")
+            self.assertEqual(len(classified.strong), 1)
+            self.assertEqual(classified.strong[0].t, START + dt.timedelta(seconds=1))
+            self.assertEqual(classified.strong[0].modem_time, "01/01/2026 19:59:59")
+            saved = analysis.classify_and_save(root, event)
+            self.assertIn("T4", saved.timeline_path.read_text(encoding="utf-8"))
+            self.assertIn("觀察分類 A", report.evidence(root))
+
+    def test_cm_status_exact_type_6_reaches_ucid_report(self):
+        # No CM-STATUS exists in the available real modem ring, so this exact
+        # DOCSIS marker is synthetic, not a claim about every CBN firmware.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dataset = Dataset(root)
+            dataset.skew(2)
+            self.fake.logs = [
+                {"Time": (START - dt.timedelta(seconds=7)).strftime("%Y-%m-%d %H:%M:%S"),
+                 "Description": "T4 time out"},
+                {"Time": (START - dt.timedelta(seconds=3)).strftime("%Y-%m-%d %H:%M:%S"),
+                 "Description": "CM-STATUS message sent. Event Type Code: 6; Chan ID: 7;"}]
+            self.cfg.data_dir = tmp
+            worker = modem_worker.ModemWorker(self.cfg, dataset.store)
+            self.addCleanup(worker.client.logout)
+            self.addCleanup(worker.core.shutdown)
+            self.addCleanup(worker.slow.shutdown)
+            with mock.patch.object(storage, "now_text", return_value=ts(START + dt.timedelta(minutes=5))), \
+                    mock.patch.object(dataset.store, "day_dir", return_value=dataset.day):
+                worker._read_log("Validation")
+            classified = analysis.classify(root, analysis.find_event(root))
+            self.assertEqual(len(classified.strong), 2)
+            days = (dt.date.today() - START.date()).days + 2
+            self.assertIn("T4 → CM-STATUS：+4 s", ucid.report(root, "7", days))
+
+    def test_noncanonical_cm_status_6_remains_weak(self):
+        self.fake.logs = [{"Time": "2026-10-01 12:00:00",
+            "Description": "CM-STATUS message sent. Event Type Code:6; Chan ID: 7;"}]
+        entry = hitron.log_entries(self.client().get("Log")[0])[0]
+        self.assertEqual(entry[2], evidence.CM_STATUS)
+        self.assertEqual(evidence.evidence_kind(entry[2], entry[3]), "weak")
+
+    def test_log_time_does_not_invent_dates_or_change_canonical_format(self):
+        for value in ("Time Not Established", "", "10/01/2026 12:00:00", "2026-02-30 12:00:00"):
+            self.assertEqual(cbn.log_time(value), value)
 
     def test_missing_channels_do_not_become_successful_empty_read(self):
         client = self.client()

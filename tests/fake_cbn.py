@@ -5,6 +5,7 @@ import copy
 import http.server
 import json
 import threading
+import time
 import urllib.parse
 
 DOCSIS = {
@@ -32,13 +33,16 @@ class FakeCbn:
         self.reads = {}
         self.logins = 0
         self.docsis = copy.deepcopy(DOCSIS)
+        self.body_delay = {}
+        self.logs = [{"Time": "2026-10-01 12:00:00", "Priority": "critical",
+            "Description": "Received Response to Broadcast Maintenance Request, But no Unicast Maintenance opportunities received - T4 time out;CM-MAC=00:00:00:00:00:01;CMTS-MAC=00:00:00:00:00:02;"}]
         fake = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *args):
                 pass
 
-            def send(self, body, cookie=False, rotate=False):
+            def send(self, body, cookie=False, rotate=False, body_delay=0):
                 self.send_response(200)
                 if cookie:
                     self.send_header("Set-Cookie", "session=cbn; Path=/")
@@ -48,7 +52,13 @@ class FakeCbn:
                     self.send_header("CSRF_Token", fake.token)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                if body_delay:
+                    self.wfile.flush()
+                    time.sleep(body_delay)
+                try:
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass  # Expected when testing a client's body-read timeout.
 
             def do_GET(self):
                 if self.path == "/common_page/login.php":
@@ -85,12 +95,12 @@ class FakeCbn:
                     data = {"SystemInfo": {"SystemUpTime": "1 day(s) 02h:03m:04s"},
                             "IPv4": {"DefaultGateware": "10.0.0.1"}}
                 elif fun == 11:
-                    data = {"DOCSIS_Log": [{"Time": "2026-10-01 12:00:00", "Priority": "critical",
-                        "Description": "Received Response to Broadcast Maintenance Request, But no Unicast Maintenance opportunities received - T4 time out;CM-MAC=00:00:00:00:00:01;CMTS-MAC=00:00:00:00:00:02;"}]}
+                    data = {"DOCSIS_Log": fake.logs}
                 else:
                     data = {}
                 text = urllib.parse.quote(json.dumps(data), safe="~()*!.'-")
-                self.send(b"bad payload" if fake.bad_response else base64.b64encode(text.encode()), rotate=True)
+                self.send(b"bad payload" if fake.bad_response else base64.b64encode(text.encode()),
+                          rotate=True, body_delay=fake.body_delay.get(fun, 0))
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
